@@ -18,12 +18,25 @@ The Okta SE Toolkit streamlines repetitive setup work by providing a user-friend
 
 ### 🤖 Automation Scripts
 
+#### Security & Policies
 1. **Enable FIDO2 Authenticator** - Activate WebAuthn/FIDO2 authentication
-2. **Create Super Administrators Group** - Create privileged admin group and auto-assign SUPER_ADMIN role
-3. **Update Admin Console Policy** - Configure 2FA for admin access
-4. **Populate Demo Users** - Create 50 realistic demo user accounts
-5. **Add Salesforce SAML App** - Add Salesforce from catalog with SAML 2.0
-6. **Add Box App** - Add Box from catalog with SAML 2.0
+2. **Create Device Assurance Policies** - Create policies for Android, iOS, macOS, and Windows (OIE only)
+3. **Review Entity Risk Policy** - Review current Entity Risk Policy configuration (OIE only)
+4. **Run Policy Simulation** - Simulate policy evaluation for specific apps and policy types (OIE only)
+
+#### Setup & Users
+5. **Create Super Administrators Group** - Create privileged admin group and auto-assign SUPER_ADMIN role
+6. **Populate Demo Users** - Create 50 realistic demo user accounts
+7. **Create Standard Department Groups** - Create groups for various departments with auto-assignment rules
+8. **Setup Realms** - Configure default, Partners, and Contractors realms
+9. **Add New Administrator** - Create a new admin user and assign to Super Admins group
+
+#### Applications
+10. **Add Salesforce SAML App** - Add Salesforce from catalog with SAML 2.0
+11. **Add Box App** - Add Box from catalog with SAML 2.0
+
+#### Governance
+12. **Create Access Certification Campaign** - Create a quarterly recurring campaign for user access review
 
 ### ⚡ Bulk Execution
 - **"Run All Scripts"** button executes all automations in sequence
