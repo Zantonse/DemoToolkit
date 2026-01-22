@@ -2487,6 +2487,7 @@ export async function setupSodDemo(
     const bundle1Payload = {
       name: role1Name,
       description: `Access bundle for ${role1Name} entitlement`,
+      status: 'ACTIVE',
       entitlements: [
         {
           id: entitlement.id,
@@ -2515,6 +2516,7 @@ export async function setupSodDemo(
     const bundle2Payload = {
       name: role2Name,
       description: `Access bundle for ${role2Name} entitlement`,
+      status: 'ACTIVE',
       entitlements: [
         {
           id: entitlement.id,
