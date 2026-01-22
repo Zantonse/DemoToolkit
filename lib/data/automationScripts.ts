@@ -135,5 +135,42 @@ export const automationScripts: AutomationScript[] = [
         ]
       }
     ]
+  },
+  {
+    id: "setup-sod-demo",
+    name: "Setup SoD Demo (NetSuite)",
+    description: "Creates entitlements, SoD risk rule, and entitlement bundles for a Separation of Duties demo. Requires OAuth credentials with OIG scopes. Works with any OIN app with governance enabled.",
+    category: "Governance",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "appId",
+        label: "Application Instance ID",
+        type: "text",
+        placeholder: "0oaxxxxxxxxxxxxxxxx",
+        required: true
+      },
+      {
+        name: "entitlementName",
+        label: "Entitlement Name",
+        type: "text",
+        placeholder: "NetSuite Role",
+        required: false
+      },
+      {
+        name: "role1Name",
+        label: "Role 1 (Creator Role)",
+        type: "text",
+        placeholder: "Payroll Administrator",
+        required: false
+      },
+      {
+        name: "role2Name",
+        label: "Role 2 (Approver Role)",
+        type: "text",
+        placeholder: "Payroll Approver",
+        required: false
+      }
+    ]
   }
 ];

@@ -37,6 +37,7 @@ import {
   addNewAdministrator,
   runPolicySimulation,
   runAllScripts,
+  setupSodDemo,
 } from '../actions/oktaActions';
 
 /**
@@ -55,14 +56,15 @@ type ScriptId =
   | 'create-access-certification-campaign'
   | 'setup-realms'
   | 'add-new-administrator'
-  | 'run-policy-simulation';
+  | 'run-policy-simulation'
+  | 'setup-sod-demo';
 
 
 
 type ScriptResult = OktaActionResult;
 
 export function ScriptRunner() {
-  const { orgUrl, apiToken } = useOkta();
+  const { orgUrl, apiToken, clientId, clientSecret, privateKey, keyId } = useOkta();
 
   const [runningScriptId, setRunningScriptId] = useState<ScriptId | 'all' | null>(null);
   const [scriptResults, setScriptResults] = useState<Record<string, ScriptResult | null>>({});
@@ -88,6 +90,10 @@ export function ScriptRunner() {
   const buildConfig = () => ({
     orgUrl,
     apiToken,
+    clientId,
+    clientSecret,
+    privateKey,
+    keyId,
   });
 
   // Load dynamic options for select fields (e.g., applications list)
@@ -210,6 +216,23 @@ export function ScriptRunner() {
             result = await runPolicySimulation(config, {
               appInstance: simInputs.appInstance as string,
               policyTypes: simInputs.policyTypes ? (simInputs.policyTypes as string[]) : undefined,
+            });
+          }
+          break;
+
+        case 'setup-sod-demo':
+          const sodInputs = scriptInputs[scriptId] || {};
+          if (!sodInputs.appId) {
+            result = {
+              success: false,
+              message: 'Please enter an Application Instance ID.',
+            };
+          } else {
+            result = await setupSodDemo(config, {
+              appId: sodInputs.appId as string,
+              entitlementName: sodInputs.entitlementName as string | undefined,
+              role1Name: sodInputs.role1Name as string | undefined,
+              role2Name: sodInputs.role2Name as string | undefined,
             });
           }
           break;

@@ -27,6 +27,10 @@ import { useOkta } from '../context/OktaContext';
 interface FieldErrors {
   orgUrl?: string;
   apiToken?: string;
+  clientId?: string;
+  clientSecret?: string;
+  privateKey?: string;
+  keyId?: string;
 }
 
 /** Status of the connection test */
@@ -36,13 +40,24 @@ export function SettingsPanel() {
   const {
     orgUrl,
     apiToken,
+    authMode,
+    clientId,
+    clientSecret,
+    privateKey,
+    keyId,
     setOrgUrl,
     setApiToken,
+    setAuthMode,
+    setClientId,
+    setClientSecret,
+    setPrivateKey,
+    setKeyId,
     resetConfig,
     isInitialized,
   } = useOkta();
 
   const [showToken, setShowToken] = useState(false);
+  const [showClientSecret, setShowClientSecret] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -66,6 +81,19 @@ export function SettingsPanel() {
       newErrors.apiToken = 'API Token is required.';
     } else if (apiToken.trim().length < 16) {
       newErrors.apiToken = 'API Token looks too short.';
+    }
+
+    // Validate OAuth fields only if OAuth mode is selected
+    if (authMode === 'oauth') {
+      if (!clientId.trim()) {
+        newErrors.clientId = 'Client ID is required for OAuth mode.';
+      }
+      if (!privateKey.trim()) {
+        newErrors.privateKey = 'Private Key is required for OIG APIs.';
+      }
+      if (!keyId.trim()) {
+        newErrors.keyId = 'Key ID is required for OIG APIs.';
+      }
     }
 
     setErrors(newErrors);
@@ -293,6 +321,112 @@ export function SettingsPanel() {
             Stored in your browser&apos;s localStorage; this panel does not log
             or persist the token server-side.
           </p>
+        </div>
+
+        {/* OAuth 2.0 Section for OIG APIs */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-4">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-800">
+                OAuth 2.0 Credentials (for OIG APIs)
+              </h3>
+              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                Required for Governance
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Required for Identity Governance scripts (SoD, Entitlements). Create an API Services app with <strong>private_key_jwt</strong> authentication and grant scopes:{' '}
+              <code className="text-[10px] bg-slate-200 px-1 rounded">okta.governance.entitlements.manage</code>,{' '}
+              <code className="text-[10px] bg-slate-200 px-1 rounded">okta.governance.riskRule.manage</code>
+            </p>
+          </div>
+
+          {/* OAuth Client ID */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="clientId"
+              className="block text-sm font-medium text-slate-800"
+            >
+              Client ID
+            </label>
+            <input
+              id="clientId"
+              type="text"
+              autoComplete="off"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              onBlur={validate}
+              placeholder="0oaxxxxxxxxxxxxxxxx"
+              className={`block w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 ${
+                errors.clientId
+                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400'
+                  : 'border-slate-300 focus:border-sky-500'
+              }`}
+            />
+            {errors.clientId && (
+              <p className="text-xs text-red-600">{errors.clientId}</p>
+            )}
+          </div>
+
+          {/* Key ID */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="keyId"
+              className="block text-sm font-medium text-slate-800"
+            >
+              Key ID (kid)
+            </label>
+            <input
+              id="keyId"
+              type="text"
+              autoComplete="off"
+              value={keyId}
+              onChange={(e) => setKeyId(e.target.value)}
+              onBlur={validate}
+              placeholder="Key ID from your public key"
+              className={`block w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 ${
+                errors.keyId
+                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400'
+                  : 'border-slate-300 focus:border-sky-500'
+              }`}
+            />
+            {errors.keyId && (
+              <p className="text-xs text-red-600">{errors.keyId}</p>
+            )}
+            <p className="text-xs text-slate-500">
+              Found in the app&apos;s General tab → Public Keys section after adding a key.
+            </p>
+          </div>
+
+          {/* Private Key */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="privateKey"
+              className="block text-sm font-medium text-slate-800"
+            >
+              Private Key (PEM format)
+            </label>
+            <textarea
+              id="privateKey"
+              rows={5}
+              autoComplete="off"
+              value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)}
+              onBlur={validate}
+              placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
+              className={`block w-full rounded-md border px-3 py-2 text-xs font-mono shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 ${
+                errors.privateKey
+                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400'
+                  : 'border-slate-300 focus:border-sky-500'
+              }`}
+            />
+            {errors.privateKey && (
+              <p className="text-xs text-red-600">{errors.privateKey}</p>
+            )}
+            <p className="text-xs text-slate-500">
+              The private key generated when creating a public key in Okta. Stored locally only.
+            </p>
+          </div>
         </div>
 
         {/* Connection test status */}

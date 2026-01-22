@@ -2096,3 +2096,478 @@ export async function runAllScripts(
   };
 }
 
+// ============================================================================
+// OAuth 2.0 Utilities for OIG APIs
+// ============================================================================
+
+import { SignJWT, importPKCS8, importJWK } from 'jose';
+
+interface OAuthTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  scope: string;
+}
+
+/**
+ * Generate a client assertion JWT for private_key_jwt authentication
+ * Supports both PEM format and JWK (JSON) format private keys
+ */
+async function generateClientAssertion(
+  clientId: string,
+  orgUrl: string,
+  privateKeyInput: string,
+  keyId: string
+): Promise<string> {
+  let privateKey;
+  
+  // Normalize the input - remove extra whitespace and carriage returns
+  let keyData = privateKeyInput.trim().replace(/\r/g, '');
+  
+  // Strip PEM headers if present (Okta sometimes wraps JWK in PEM headers incorrectly)
+  if (keyData.includes('-----BEGIN')) {
+    keyData = keyData
+      .replace(/-----BEGIN [A-Z ]+-----/g, '')
+      .replace(/-----END [A-Z ]+-----/g, '')
+      .trim();
+  }
+  
+  // Check if it's JSON (JWK format) by looking for opening brace
+  const isJwk = keyData.startsWith('{') || keyData.includes('"kty"');
+  
+  if (isJwk) {
+    // Parse as JWK (JSON Web Key)
+    try {
+      const jwk = JSON.parse(keyData);
+      if (!jwk.kty) {
+        throw new Error('JWK missing required "kty" field');
+      }
+      privateKey = await importJWK(jwk, 'RS256');
+      console.log('Parsed private key as JWK format');
+    } catch (err: any) {
+      throw new Error(`Failed to parse private key as JWK: ${err.message}. Make sure the JSON is valid.`);
+    }
+  } else {
+    // Parse as PEM format
+    try {
+      // Reconstruct PEM with proper formatting
+      let pemKey = privateKeyInput.trim();
+      
+      if (!pemKey.includes('-----BEGIN')) {
+        // Raw base64, wrap in PEM headers
+        const chunked = keyData.match(/.{1,64}/g)?.join('\n') || keyData;
+        pemKey = `-----BEGIN PRIVATE KEY-----\n${chunked}\n-----END PRIVATE KEY-----`;
+      } else {
+        // Has headers but might need newline fixing
+        pemKey = pemKey.replace(/\r/g, '');
+        if (!pemKey.includes('\n')) {
+          pemKey = pemKey
+            .replace(/-----BEGIN PRIVATE KEY-----/, '-----BEGIN PRIVATE KEY-----\n')
+            .replace(/-----END PRIVATE KEY-----/, '\n-----END PRIVATE KEY-----');
+        }
+      }
+      
+      privateKey = await importPKCS8(pemKey, 'RS256');
+      console.log('Parsed private key as PEM format');
+    } catch (err: any) {
+      throw new Error(`Failed to parse private key as PEM: ${err.message}. For JWK format, paste the JSON directly.`);
+    }
+  }
+  
+  const now = Math.floor(Date.now() / 1000);
+  const jti = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+  
+  const jwt = await new SignJWT({})
+    .setProtectedHeader({ alg: 'RS256', kid: keyId })
+    .setIssuedAt(now)
+    .setExpirationTime(now + 300) // 5 minutes
+    .setIssuer(clientId)
+    .setSubject(clientId)
+    .setAudience(`${normalizeOrgUrl(orgUrl)}/oauth2/v1/token`)
+    .setJti(jti)
+    .sign(privateKey);
+  
+  return jwt;
+}
+
+/**
+ * Get OAuth 2.0 access token using client credentials flow with private_key_jwt
+ * Required for OIG APIs (Entitlements, Risk Rules, etc.)
+ */
+async function getOAuthAccessToken(
+  orgUrl: string,
+  clientId: string,
+  privateKey: string,
+  keyId: string,
+  scopes: string[]
+): Promise<string> {
+  const baseUrl = normalizeOrgUrl(orgUrl);
+  const tokenUrl = `${baseUrl}/oauth2/v1/token`;
+
+  // Generate client assertion JWT
+  const clientAssertion = await generateClientAssertion(clientId, orgUrl, privateKey, keyId);
+
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'application/json',
+    },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      scope: scopes.join(' '),
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      client_assertion: clientAssertion,
+    }),
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    const error = await safeJson(response);
+    throw new Error(
+      `OAuth token exchange failed (${response.status}): ${
+        error?.error_description || error?.error || response.statusText
+      }`
+    );
+  }
+
+  const tokenData = (await response.json()) as OAuthTokenResponse;
+  return tokenData.access_token;
+}
+
+/**
+ * Make authenticated request to OIG API using OAuth Bearer token
+ */
+async function oigFetch<T = any>(
+  baseUrl: string,
+  accessToken: string,
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  const url = `${normalizeOrgUrl(baseUrl)}${path}`;
+
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      ...init?.headers,
+    },
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    const error = await safeJson(response);
+    const method = init?.method || 'GET';
+    let helpText = '';
+    
+    if (response.status === 403) {
+      helpText = ' Check that your API Services app has: 1) Okta API Scopes granted (okta.governance.entitlements.manage, okta.governance.riskRule.manage, okta.apps.read), and 2) An admin role assigned (Super Administrator or custom role with OIG permissions).';
+    }
+    
+    throw new Error(
+      `OIG API error on ${method} ${path} (${response.status}): ${
+        error?.errorSummary || error?.message || response.statusText
+      }${helpText}`
+    );
+  }
+
+  return response.json();
+}
+
+// ============================================================================
+// Setup SoD Demo - Creates entitlements, risk rule, and bundles
+// ============================================================================
+
+interface SetupSodDemoParams {
+  appId: string;
+  entitlementName?: string;
+  role1Name?: string;
+  role2Name?: string;
+}
+
+interface EntitlementValue {
+  id: string;
+  name: string;
+  externalValue: string;
+}
+
+interface Entitlement {
+  id: string;
+  name: string;
+  externalValue: string;
+  values?: EntitlementValue[];
+}
+
+interface RiskRule {
+  id: string;
+  name: string;
+  type: string;
+}
+
+interface EntitlementBundle {
+  id: string;
+  name: string;
+}
+
+/**
+ * Setup SoD Demo
+ * 
+ * Creates the complete SoD demo structure for an application:
+ * 1. Creates an entitlement with two values (conflicting roles)
+ * 2. Creates a SoD risk rule that flags conflicts
+ * 3. Creates entitlement bundles for each role (for Access Requests)
+ */
+export async function setupSodDemo(
+  config: OktaConfig,
+  params: SetupSodDemoParams
+): Promise<OktaActionResult<{
+  entitlement?: Entitlement;
+  riskRule?: RiskRule;
+  bundles?: EntitlementBundle[];
+}>> {
+  const baseUrl = normalizeOrgUrl(config.orgUrl);
+
+  // Validate OAuth credentials (now requires privateKey and keyId for private_key_jwt)
+  if (!config.clientId || !config.privateKey || !config.keyId) {
+    return {
+      success: false,
+      message: 'OAuth credentials (Client ID, Private Key, and Key ID) are required for SoD Demo setup. Configure them in Settings.',
+    };
+  }
+
+  // Default values
+  const entitlementName = params.entitlementName?.trim() || 'NetSuite Role';
+  const role1Name = params.role1Name?.trim() || 'Payroll Administrator';
+  const role2Name = params.role2Name?.trim() || 'Payroll Approver';
+  const appId = params.appId.trim();
+
+  const role1ExternalValue = role1Name.toLowerCase().replace(/\s+/g, '_');
+  const role2ExternalValue = role2Name.toLowerCase().replace(/\s+/g, '_');
+  const entitlementExternalValue = entitlementName.toLowerCase().replace(/\s+/g, '_');
+
+  try {
+    // Step 1: Get OAuth access token using private_key_jwt
+    console.log('Getting OAuth access token...');
+    const accessToken = await getOAuthAccessToken(
+      config.orgUrl,
+      config.clientId,
+      config.privateKey,
+      config.keyId,
+      [
+        'okta.orgs.read',
+        'okta.governance.entitlements.manage',
+        'okta.governance.riskRule.manage',
+        'okta.governance.accessRequests.manage',
+      ]
+    );
+
+    // Step 2: Get org ID for constructing resource ORN
+    console.log('Getting org info...');
+    const orgInfo = await oigFetch<{ id: string }>(
+      baseUrl,
+      accessToken,
+      '/api/v1/org'
+    );
+    const orgId = orgInfo.id;
+
+    // Step 3: Create entitlement with values
+    console.log('Creating entitlement with values...');
+    const entitlementPayload = {
+      name: entitlementName,
+      externalValue: entitlementExternalValue,
+      description: `Business roles in ${entitlementName.replace(' Role', '')} used for access requests and governance`,
+      parent: {
+        externalId: appId,
+        type: 'APPLICATION',
+      },
+      multiValue: true,
+      dataType: 'string',
+      values: [
+        {
+          name: role1Name,
+          externalValue: role1ExternalValue,
+          description: `Can create/modify ${role1Name.toLowerCase().includes('payroll') ? 'payroll entries' : 'records'}`,
+        },
+        {
+          name: role2Name,
+          externalValue: role2ExternalValue,
+          description: `Can approve ${role2Name.toLowerCase().includes('payroll') ? 'payroll changes' : 'requests'}`,
+        },
+      ],
+    };
+
+    const entitlement = await oigFetch<Entitlement>(
+      baseUrl,
+      accessToken,
+      '/governance/api/v1/entitlements',
+      {
+        method: 'POST',
+        body: JSON.stringify(entitlementPayload),
+      }
+    );
+
+    console.log(`Created entitlement: ${entitlement.id}`);
+
+    // Get the value IDs from the created entitlement
+    const value1 = entitlement.values?.find(v => v.externalValue === role1ExternalValue);
+    const value2 = entitlement.values?.find(v => v.externalValue === role2ExternalValue);
+
+    if (!value1 || !value2) {
+      return {
+        success: false,
+        message: 'Entitlement created but values could not be retrieved. Check the entitlement in Admin Console.',
+        data: { entitlement },
+      };
+    }
+
+    // Step 4: Create SoD Risk Rule
+    console.log('Creating SoD risk rule...');
+    const resourceOrn = `orn:okta:idp:${orgId}:apps:netsuite:${appId}`;
+
+    const riskRulePayload = {
+      name: `SoD - ${role1Name} vs ${role2Name}`,
+      description: `Prevents a user from holding both ${role1Name.toLowerCase()} and ${role2Name.toLowerCase()} roles`,
+      type: 'SEPARATION_OF_DUTIES',
+      resources: [
+        { resourceOrn },
+      ],
+      conflictCriteria: {
+        and: [
+          {
+            name: `has_${role1ExternalValue}`,
+            attribute: 'principal.effective_grants',
+            operation: 'CONTAINS_ONE',
+            value: {
+              type: 'ENTITLEMENTS',
+              value: [
+                {
+                  id: entitlement.id,
+                  values: [{ id: value1.id }],
+                },
+              ],
+            },
+          },
+          {
+            name: `has_${role2ExternalValue}`,
+            attribute: 'principal.effective_grants',
+            operation: 'CONTAINS_ONE',
+            value: {
+              type: 'ENTITLEMENTS',
+              value: [
+                {
+                  id: entitlement.id,
+                  values: [{ id: value2.id }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    const riskRule = await oigFetch<RiskRule>(
+      baseUrl,
+      accessToken,
+      '/governance/api/v1/risk-rules',
+      {
+        method: 'POST',
+        body: JSON.stringify(riskRulePayload),
+      }
+    );
+
+    console.log(`Created risk rule: ${riskRule.id}`);
+
+    // Step 5: Create Entitlement Bundles for Access Requests
+    console.log('Creating entitlement bundles...');
+    const bundles: EntitlementBundle[] = [];
+
+    // Bundle for Role 1
+    const bundle1Payload = {
+      name: role1Name,
+      description: `Access bundle for ${role1Name} entitlement`,
+      entitlements: [
+        {
+          id: entitlement.id,
+          values: [{ id: value1.id }],
+        },
+      ],
+    };
+
+    try {
+      const bundle1 = await oigFetch<EntitlementBundle>(
+        baseUrl,
+        accessToken,
+        '/governance/api/v1/entitlement-bundles',
+        {
+          method: 'POST',
+          body: JSON.stringify(bundle1Payload),
+        }
+      );
+      bundles.push(bundle1);
+      console.log(`Created bundle: ${bundle1.id}`);
+    } catch (bundleErr: any) {
+      console.warn(`Could not create bundle for ${role1Name}: ${bundleErr.message}`);
+    }
+
+    // Bundle for Role 2
+    const bundle2Payload = {
+      name: role2Name,
+      description: `Access bundle for ${role2Name} entitlement`,
+      entitlements: [
+        {
+          id: entitlement.id,
+          values: [{ id: value2.id }],
+        },
+      ],
+    };
+
+    try {
+      const bundle2 = await oigFetch<EntitlementBundle>(
+        baseUrl,
+        accessToken,
+        '/governance/api/v1/entitlement-bundles',
+        {
+          method: 'POST',
+          body: JSON.stringify(bundle2Payload),
+        }
+      );
+      bundles.push(bundle2);
+      console.log(`Created bundle: ${bundle2.id}`);
+    } catch (bundleErr: any) {
+      console.warn(`Could not create bundle for ${role2Name}: ${bundleErr.message}`);
+    }
+
+    // Build success message
+    const successParts = [
+      `✓ Created entitlement "${entitlementName}" (${entitlement.id}) with values:`,
+      `  - ${role1Name} (${value1.id})`,
+      `  - ${role2Name} (${value2.id})`,
+      `✓ Created SoD risk rule "${riskRule.name}" (${riskRule.id})`,
+    ];
+
+    if (bundles.length > 0) {
+      successParts.push(`✓ Created ${bundles.length} entitlement bundle(s) for Access Requests`);
+    }
+
+    successParts.push('', 'Demo ready! Users with one role will be flagged/blocked when requesting the other.');
+
+    return {
+      success: true,
+      message: successParts.join('\n'),
+      data: {
+        entitlement,
+        riskRule,
+        bundles: bundles.length > 0 ? bundles : undefined,
+      },
+    };
+  } catch (err: any) {
+    console.error('setupSodDemo error', err);
+    return {
+      success: false,
+      message: `Error setting up SoD demo: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
