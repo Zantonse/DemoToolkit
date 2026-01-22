@@ -2479,53 +2479,113 @@ export async function setupSodDemo(
 
     console.log(`Created risk rule: ${riskRule.id}`);
 
-    // Step 5: Create Entitlement Bundles for Access Requests
-    console.log('Creating entitlement bundles...');
+    // Build success message
+    const successParts = [
+      `✓ Created entitlement "${entitlementName}" (${entitlement.id}) with values:`,
+      `  - ${role1Name} (${value1.id})`,
+      `  - ${role2Name} (${value2.id})`,
+      `✓ Created SoD risk rule "${riskRule.name}" (${riskRule.id})`,
+      '',
+      'Next: Run "Create Entitlement Bundles" to enable Access Requests for these roles.',
+    ];
+
+    return {
+      success: true,
+      message: successParts.join('\n'),
+      data: {
+        entitlement,
+        riskRule,
+      },
+    };
+  } catch (err: any) {
+    console.error('setupSodDemo error', err);
+    return {
+      success: false,
+      message: `Error setting up SoD demo: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+/**
+ * Create Entitlement Bundles for Access Requests
+ * Creates bundles that package entitlement values for easy requesting
+ */
+export async function createEntitlementBundles(
+  config: OktaConfig,
+  options: {
+    entitlementId: string;
+    bundle1Name: string;
+    bundle1ValueId: string;
+    bundle2Name?: string;
+    bundle2ValueId?: string;
+  }
+): Promise<ScriptResult> {
+  const baseUrl = normalizeOrgUrl(config.orgUrl);
+  const {
+    entitlementId,
+    bundle1Name,
+    bundle1ValueId,
+    bundle2Name,
+    bundle2ValueId,
+  } = options;
+
+  try {
+    // Step 1: Get OAuth access token
+    console.log('Getting OAuth access token...');
+    const accessToken = await getOAuthAccessToken(
+      config.orgUrl,
+      config.clientId,
+      config.privateKey,
+      config.keyId,
+      [
+        'okta.governance.entitlements.read',
+        'okta.governance.accessRequests.manage',
+      ]
+    );
+
     const bundles: EntitlementBundle[] = [];
 
-    // Bundle for Role 1
+    // Create first bundle
+    console.log(`Creating bundle: ${bundle1Name}...`);
     const bundle1Payload = {
-      name: role1Name,
-      description: `Access bundle for ${role1Name} entitlement`,
+      name: bundle1Name,
+      description: `Access bundle for ${bundle1Name}`,
       status: 'ACTIVE',
       entitlements: [
         {
-          id: entitlement.id,
-          values: [{ id: value1.id }],
+          id: entitlementId,
+          values: [{ id: bundle1ValueId }],
         },
       ],
     };
 
-    try {
-      const bundle1 = await oigFetch<EntitlementBundle>(
-        baseUrl,
-        accessToken,
-        '/governance/api/v1/entitlement-bundles',
-        {
-          method: 'POST',
-          body: JSON.stringify(bundle1Payload),
-        }
-      );
-      bundles.push(bundle1);
-      console.log(`Created bundle: ${bundle1.id}`);
-    } catch (bundleErr: any) {
-      console.warn(`Could not create bundle for ${role1Name}: ${bundleErr.message}`);
-    }
+    const bundle1 = await oigFetch<EntitlementBundle>(
+      baseUrl,
+      accessToken,
+      '/governance/api/v1/entitlement-bundles',
+      {
+        method: 'POST',
+        body: JSON.stringify(bundle1Payload),
+      }
+    );
+    bundles.push(bundle1);
+    console.log(`Created bundle: ${bundle1.id}`);
 
-    // Bundle for Role 2
-    const bundle2Payload = {
-      name: role2Name,
-      description: `Access bundle for ${role2Name} entitlement`,
-      status: 'ACTIVE',
-      entitlements: [
-        {
-          id: entitlement.id,
-          values: [{ id: value2.id }],
-        },
-      ],
-    };
+    // Create second bundle if provided
+    if (bundle2Name && bundle2ValueId) {
+      console.log(`Creating bundle: ${bundle2Name}...`);
+      const bundle2Payload = {
+        name: bundle2Name,
+        description: `Access bundle for ${bundle2Name}`,
+        status: 'ACTIVE',
+        entitlements: [
+          {
+            id: entitlementId,
+            values: [{ id: bundle2ValueId }],
+          },
+        ],
+      };
 
-    try {
       const bundle2 = await oigFetch<EntitlementBundle>(
         baseUrl,
         accessToken,
@@ -2537,38 +2597,25 @@ export async function setupSodDemo(
       );
       bundles.push(bundle2);
       console.log(`Created bundle: ${bundle2.id}`);
-    } catch (bundleErr: any) {
-      console.warn(`Could not create bundle for ${role2Name}: ${bundleErr.message}`);
     }
 
-    // Build success message
     const successParts = [
-      `✓ Created entitlement "${entitlementName}" (${entitlement.id}) with values:`,
-      `  - ${role1Name} (${value1.id})`,
-      `  - ${role2Name} (${value2.id})`,
-      `✓ Created SoD risk rule "${riskRule.name}" (${riskRule.id})`,
+      `✓ Created ${bundles.length} entitlement bundle(s):`,
+      ...bundles.map(b => `  - ${b.name} (${b.id})`),
+      '',
+      'Bundles are now available for Access Requests!',
     ];
-
-    if (bundles.length > 0) {
-      successParts.push(`✓ Created ${bundles.length} entitlement bundle(s) for Access Requests`);
-    }
-
-    successParts.push('', 'Demo ready! Users with one role will be flagged/blocked when requesting the other.');
 
     return {
       success: true,
       message: successParts.join('\n'),
-      data: {
-        entitlement,
-        riskRule,
-        bundles: bundles.length > 0 ? bundles : undefined,
-      },
+      data: { bundles },
     };
   } catch (err: any) {
-    console.error('setupSodDemo error', err);
+    console.error('createEntitlementBundles error', err);
     return {
       success: false,
-      message: `Error setting up SoD demo: ${err.message ?? String(err)}`,
+      message: `Error creating entitlement bundles: ${err.message ?? String(err)}`,
     };
   }
 }

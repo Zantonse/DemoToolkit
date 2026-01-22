@@ -38,6 +38,7 @@ import {
   runPolicySimulation,
   runAllScripts,
   setupSodDemo,
+  createEntitlementBundles,
 } from '../actions/oktaActions';
 
 /**
@@ -57,7 +58,8 @@ type ScriptId =
   | 'setup-realms'
   | 'add-new-administrator'
   | 'run-policy-simulation'
-  | 'setup-sod-demo';
+  | 'setup-sod-demo'
+  | 'create-entitlement-bundles';
 
 
 
@@ -233,6 +235,24 @@ export function ScriptRunner() {
               entitlementName: sodInputs.entitlementName as string | undefined,
               role1Name: sodInputs.role1Name as string | undefined,
               role2Name: sodInputs.role2Name as string | undefined,
+            });
+          }
+          break;
+
+        case 'create-entitlement-bundles':
+          const bundleInputs = scriptInputs[scriptId] || {};
+          if (!bundleInputs.entitlementId || !bundleInputs.bundle1Name || !bundleInputs.bundle1ValueId) {
+            result = {
+              success: false,
+              message: 'Please enter the Entitlement ID, Bundle 1 Name, and Bundle 1 Value ID.',
+            };
+          } else {
+            result = await createEntitlementBundles(config, {
+              entitlementId: bundleInputs.entitlementId as string,
+              bundle1Name: bundleInputs.bundle1Name as string,
+              bundle1ValueId: bundleInputs.bundle1ValueId as string,
+              bundle2Name: bundleInputs.bundle2Name as string | undefined,
+              bundle2ValueId: bundleInputs.bundle2ValueId as string | undefined,
             });
           }
           break;

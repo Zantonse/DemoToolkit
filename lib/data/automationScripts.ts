@@ -139,7 +139,7 @@ export const automationScripts: AutomationScript[] = [
   {
     id: "setup-sod-demo",
     name: "Setup SoD Demo (NetSuite)",
-    description: "Creates entitlements, SoD risk rule, and entitlement bundles for a Separation of Duties demo. Requires OAuth credentials with OIG scopes. Works with any OIN app with governance enabled.",
+    description: "Creates entitlements and SoD risk rule for a Separation of Duties demo. Requires OAuth credentials with OIG scopes. Works with any OIN app with governance enabled.",
     category: "Governance",
     requiresInput: true,
     inputFields: [
@@ -169,6 +169,50 @@ export const automationScripts: AutomationScript[] = [
         label: "Role 2 (Approver Role)",
         type: "text",
         placeholder: "Payroll Approver",
+        required: false
+      }
+    ]
+  },
+  {
+    id: "create-entitlement-bundles",
+    name: "Create Entitlement Bundles",
+    description: "Creates entitlement bundles for Access Requests. Use after setting up entitlements with the SoD Demo script. Requires OAuth credentials with OIG scopes.",
+    category: "Governance",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "entitlementId",
+        label: "Entitlement ID",
+        type: "text",
+        placeholder: "espxxxxxxxxxxxxxxxx",
+        required: true
+      },
+      {
+        name: "bundle1Name",
+        label: "Bundle 1 Name",
+        type: "text",
+        placeholder: "Payroll Administrator",
+        required: true
+      },
+      {
+        name: "bundle1ValueId",
+        label: "Bundle 1 Value ID",
+        type: "text",
+        placeholder: "esvxxxxxxxxxxxxxxxx",
+        required: true
+      },
+      {
+        name: "bundle2Name",
+        label: "Bundle 2 Name (Optional)",
+        type: "text",
+        placeholder: "Payroll Approver",
+        required: false
+      },
+      {
+        name: "bundle2ValueId",
+        label: "Bundle 2 Value ID (Optional)",
+        type: "text",
+        placeholder: "esvxxxxxxxxxxxxxxxx",
         required: false
       }
     ]
