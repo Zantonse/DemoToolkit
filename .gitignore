@@ -58,6 +58,7 @@ next-env.d.ts
 # Local development
 .turbo
 .eslintcache
+.worktrees/
 
 # MacOS
 .DS_Store
