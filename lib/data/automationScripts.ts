@@ -1,15 +1,48 @@
 /**
  * Automation Scripts Metadata
- * 
+ *
  * Defines the list of available automation scripts and their metadata.
  * These scripts are displayed in the UI and mapped to their corresponding
- * handler functions in app/actions/oktaActions.ts
- * 
- * ⚠️ IMPORTANT: Script IDs must match the ScriptId type in ScriptRunner.tsx
- * and the corresponding handler function names.
+ * handler functions in app/actions/
+ *
+ * The ScriptId type is automatically derived from this array, so adding
+ * a new script here automatically updates the type system.
  */
 
 import type { AutomationScript } from '../types/automation';
+
+/**
+ * All valid script IDs as a const tuple for type derivation
+ */
+export const SCRIPT_IDS = [
+  'enable-fido2',
+  'create-super-admins-group',
+  'populate-demo-users',
+  'create-standard-department-groups',
+  'create-device-assurance-policies',
+  'configure-entity-risk-policy',
+  'add-salesforce-saml-app',
+  'add-box-app',
+  'create-access-certification-campaign',
+  'setup-realms',
+  'add-new-administrator',
+  'run-policy-simulation',
+  'setup-sod-demo',
+  'create-entitlement-bundles',
+  'create-network-zone',
+  'list-network-zones',
+  'create-trusted-origin',
+  'list-trusted-origins',
+  'create-auth-server',
+  'add-custom-claim',
+  'add-custom-scope',
+] as const;
+
+/**
+ * Union type of all valid script IDs - derived from SCRIPT_IDS
+ * Use this type instead of manually maintaining a union type
+ */
+export type ScriptId = (typeof SCRIPT_IDS)[number];
 
 /**
  * Array of all available automation scripts
@@ -176,27 +209,27 @@ export const automationScripts: AutomationScript[] = [
   {
     id: "create-entitlement-bundles",
     name: "Create Entitlement Bundles",
-    description: "Creates entitlement bundles for Access Requests. Use after setting up entitlements with the SoD Demo script. Requires OAuth credentials with OIG scopes.",
+    description: "Creates entitlement bundles for Access Requests. Use after setting up entitlements with the SoD Demo script - copy the IDs from that script's output. Requires OAuth credentials with OIG scopes.",
     category: "Governance",
     requiresInput: true,
     inputFields: [
       {
         name: "entitlementId",
-        label: "Entitlement ID",
+        label: "Entitlement ID (from SoD Demo output)",
         type: "text",
         placeholder: "espxxxxxxxxxxxxxxxx",
         required: true
       },
       {
         name: "bundle1Name",
-        label: "Bundle 1 Name",
+        label: "Bundle 1 Name (e.g., role name)",
         type: "text",
         placeholder: "Payroll Administrator",
         required: true
       },
       {
         name: "bundle1ValueId",
-        label: "Bundle 1 Value ID",
+        label: "Bundle 1 Entitlement Value ID (from SoD Demo output)",
         type: "text",
         placeholder: "esvxxxxxxxxxxxxxxxx",
         required: true
@@ -210,10 +243,191 @@ export const automationScripts: AutomationScript[] = [
       },
       {
         name: "bundle2ValueId",
-        label: "Bundle 2 Value ID (Optional)",
+        label: "Bundle 2 Entitlement Value ID (Optional)",
         type: "text",
         placeholder: "esvxxxxxxxxxxxxxxxx",
         required: false
+      }
+    ]
+  },
+  {
+    id: "create-network-zone",
+    name: "Create Network Zone",
+    description: "Creates an IP-based network zone with specified CIDR ranges. Checks for an existing zone with the same name before creating.",
+    category: "Security & Policies",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "name",
+        label: "Zone Name",
+        type: "text",
+        placeholder: "Corporate Network",
+        required: true
+      },
+      {
+        name: "gateways",
+        label: "Gateway CIDRs (comma-separated)",
+        type: "text",
+        placeholder: "10.0.0.0/8, 192.168.1.0/24",
+        required: true
+      }
+    ]
+  },
+  {
+    id: "list-network-zones",
+    name: "List Network Zones",
+    description: "Lists all configured network zones, including name, type, status, and number of gateways.",
+    category: "Security & Policies"
+  },
+  {
+    id: "create-trusted-origin",
+    name: "Create Trusted Origin",
+    description: "Creates a trusted origin for CORS and/or Redirect (sign-in/sign-out) flows. Checks for an existing origin with the same URL before creating.",
+    category: "Security & Policies",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "name",
+        label: "Origin Name",
+        type: "text",
+        placeholder: "My App Origin",
+        required: true
+      },
+      {
+        name: "origin",
+        label: "Origin URL",
+        type: "text",
+        placeholder: "https://example.com",
+        required: true
+      },
+      {
+        name: "scopes",
+        label: "Scope Types",
+        type: "select",
+        required: true,
+        multiple: true,
+        options: [
+          { value: "CORS", label: "CORS (Cross-Origin Resource Sharing)" },
+          { value: "REDIRECT", label: "Redirect (Sign-in/Sign-out)" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "list-trusted-origins",
+    name: "List Trusted Origins",
+    description: "Lists all configured trusted origins, including name, URL, enabled scopes, and status.",
+    category: "Security & Policies"
+  },
+  {
+    id: "create-auth-server",
+    name: "Create Authorization Server",
+    description: "Creates a custom OAuth 2.0 authorization server with specified audiences. Checks for an existing server with the same name before creating.",
+    category: "Applications",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "name",
+        label: "Server Name",
+        type: "text",
+        placeholder: "My API Authorization Server",
+        required: true
+      },
+      {
+        name: "audiences",
+        label: "Audiences (comma-separated)",
+        type: "text",
+        placeholder: "api://myapp, https://api.example.com",
+        required: true
+      },
+      {
+        name: "description",
+        label: "Description (optional)",
+        type: "text",
+        placeholder: "Authorization server for my application",
+        required: false
+      }
+    ]
+  },
+  {
+    id: "add-custom-claim",
+    name: "Add Custom Claim",
+    description: "Adds a custom claim to an authorization server using an Okta expression. The claim can target access tokens (RESOURCE) or ID tokens (IDENTITY).",
+    category: "Applications",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "authServerId",
+        label: "Authorization Server",
+        type: "select",
+        required: true,
+        dynamicOptions: true,
+        placeholder: "Choose an authorization server..."
+      },
+      {
+        name: "claimName",
+        label: "Claim Name",
+        type: "text",
+        placeholder: "email",
+        required: true
+      },
+      {
+        name: "valueExpression",
+        label: "Value Expression",
+        type: "text",
+        placeholder: "user.email",
+        required: true
+      },
+      {
+        name: "claimType",
+        label: "Claim Type",
+        type: "select",
+        required: true,
+        options: [
+          { value: "RESOURCE", label: "Access Token (RESOURCE)" },
+          { value: "IDENTITY", label: "ID Token (IDENTITY)" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "add-custom-scope",
+    name: "Add Custom Scope",
+    description: "Adds a custom OAuth 2.0 scope to an authorization server. Scopes can require explicit user consent or be granted implicitly.",
+    category: "Applications",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "authServerId",
+        label: "Authorization Server",
+        type: "select",
+        required: true,
+        dynamicOptions: true,
+        placeholder: "Choose an authorization server..."
+      },
+      {
+        name: "scopeName",
+        label: "Scope Name",
+        type: "text",
+        placeholder: "read:profile",
+        required: true
+      },
+      {
+        name: "description",
+        label: "Description (optional)",
+        type: "text",
+        placeholder: "Read user profile information",
+        required: false
+      },
+      {
+        name: "consent",
+        label: "Consent",
+        type: "select",
+        required: true,
+        options: [
+          { value: "IMPLICIT", label: "Implicit (no user consent required)" },
+          { value: "REQUIRED", label: "Required (user must consent)" }
+        ]
       }
     ]
   }

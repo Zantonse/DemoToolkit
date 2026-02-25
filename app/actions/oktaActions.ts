@@ -2113,6 +2113,408 @@ export async function setupSodDemo(
   }
 }
 
+// ============================================================================
+// Network Zones
+// ============================================================================
+
+/**
+ * Create a network zone with IP CIDR gateways
+ * - Checks for existing zone with same name first
+ * - Handles "already exists" gracefully
+ */
+export async function createNetworkZone(
+  config: OktaConfig,
+  inputs?: { name?: string; gateways?: string }
+): Promise<OktaActionResult> {
+  try {
+    const name = inputs?.name?.trim();
+    const gatewaysRaw = inputs?.gateways?.trim();
+
+    if (!name) {
+      return { success: false, message: 'Zone name is required.' };
+    }
+    if (!gatewaysRaw) {
+      return { success: false, message: 'Gateway CIDRs are required.' };
+    }
+
+    // Parse comma-separated CIDRs
+    const gateways = gatewaysRaw
+      .split(',')
+      .map((g) => g.trim())
+      .filter(Boolean)
+      .map((value) => ({ type: 'CIDR', value }));
+
+    if (gateways.length === 0) {
+      return { success: false, message: 'At least one valid CIDR is required.' };
+    }
+
+    // Check for existing zone with same name
+    const filterParam = encodeURIComponent(`name eq "${name}"`);
+    const existing = await oktaFetch<any[]>(
+      config,
+      `/api/v1/zones?filter=${filterParam}`
+    );
+
+    if (existing.length > 0) {
+      return {
+        success: true,
+        message: `Network zone "${name}" already exists (Zone ID: ${existing[0].id}). No changes made.`,
+        data: existing[0],
+      };
+    }
+
+    // Create the zone
+    const created = await oktaFetch<any>(config, '/api/v1/zones', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'IP',
+        name,
+        gateways,
+        proxies: null,
+      }),
+    });
+
+    return {
+      success: true,
+      message: `Network zone "${name}" created successfully (Zone ID: ${created.id}).`,
+      data: created,
+    };
+  } catch (err: any) {
+    console.error('createNetworkZone error', err);
+    return {
+      success: false,
+      message: `Error creating network zone: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+/**
+ * List all network zones
+ */
+export async function listNetworkZones(
+  config: OktaConfig
+): Promise<OktaActionResult> {
+  try {
+    const zones = await oktaFetch<any[]>(config, '/api/v1/zones');
+
+    if (zones.length === 0) {
+      return {
+        success: true,
+        message: 'No network zones found.',
+        data: zones,
+      };
+    }
+
+    const lines = zones.map((z) => {
+      const gatewayCount =
+        (z.gateways?.length ?? 0) + (z.proxies?.length ?? 0);
+      return `• ${z.name} | Type: ${z.type} | Status: ${z.status} | Gateways: ${gatewayCount}`;
+    });
+
+    return {
+      success: true,
+      message: `Found ${zones.length} network zone(s):\n${lines.join('\n')}`,
+      data: zones,
+    };
+  } catch (err: any) {
+    console.error('listNetworkZones error', err);
+    return {
+      success: false,
+      message: `Error listing network zones: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Trusted Origins
+// ============================================================================
+
+/**
+ * Create a trusted origin for CORS and/or Redirect flows
+ * - Checks for existing origin with same URL first
+ * - Handles "already exists" gracefully
+ */
+export async function createTrustedOrigin(
+  config: OktaConfig,
+  inputs?: { name?: string; origin?: string; scopes?: string | string[] }
+): Promise<OktaActionResult> {
+  try {
+    const name = inputs?.name?.trim();
+    const origin = inputs?.origin?.trim();
+    const rawScopes = inputs?.scopes;
+
+    if (!name) {
+      return { success: false, message: 'Origin name is required.' };
+    }
+    if (!origin) {
+      return { success: false, message: 'Origin URL is required.' };
+    }
+
+    // Normalise scopes — may arrive as string or string[]
+    const scopeList: string[] = Array.isArray(rawScopes)
+      ? rawScopes
+      : typeof rawScopes === 'string'
+        ? rawScopes.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+
+    if (scopeList.length === 0) {
+      return { success: false, message: 'At least one scope type (CORS or REDIRECT) is required.' };
+    }
+
+    // Check for existing trusted origin with same URL
+    const filterParam = encodeURIComponent(`origin eq "${origin}"`);
+    const existing = await oktaFetch<any[]>(
+      config,
+      `/api/v1/trustedOrigins?filter=${filterParam}`
+    );
+
+    if (existing.length > 0) {
+      return {
+        success: true,
+        message: `Trusted origin for "${origin}" already exists (ID: ${existing[0].id}). No changes made.`,
+        data: existing[0],
+      };
+    }
+
+    // Build scopes array
+    const scopes = scopeList.map((type) => ({ type }));
+
+    const created = await oktaFetch<any>(config, '/api/v1/trustedOrigins', {
+      method: 'POST',
+      body: JSON.stringify({ name, origin, scopes }),
+    });
+
+    return {
+      success: true,
+      message: `Trusted origin "${name}" (${origin}) created successfully (ID: ${created.id}).`,
+      data: created,
+    };
+  } catch (err: any) {
+    console.error('createTrustedOrigin error', err);
+    return {
+      success: false,
+      message: `Error creating trusted origin: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+/**
+ * List all trusted origins
+ */
+export async function listTrustedOrigins(
+  config: OktaConfig
+): Promise<OktaActionResult> {
+  try {
+    const origins = await oktaFetch<any[]>(config, '/api/v1/trustedOrigins');
+
+    if (origins.length === 0) {
+      return {
+        success: true,
+        message: 'No trusted origins found.',
+        data: origins,
+      };
+    }
+
+    const lines = origins.map((o) => {
+      const scopeTypes = (o.scopes as any[])?.map((s: any) => s.type).join(', ') ?? 'none';
+      return `• ${o.name} | URL: ${o.origin} | Scopes: ${scopeTypes} | Status: ${o.status}`;
+    });
+
+    return {
+      success: true,
+      message: `Found ${origins.length} trusted origin(s):\n${lines.join('\n')}`,
+      data: origins,
+    };
+  } catch (err: any) {
+    console.error('listTrustedOrigins error', err);
+    return {
+      success: false,
+      message: `Error listing trusted origins: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Authorization Servers
+// ============================================================================
+
+/**
+ * Create a custom authorization server
+ * - Checks for existing server with same name first
+ * - Handles "already exists" gracefully
+ */
+export async function createAuthServer(
+  config: OktaConfig,
+  inputs?: { name?: string; audiences?: string; description?: string }
+): Promise<OktaActionResult> {
+  try {
+    const name = inputs?.name?.trim();
+    const audiencesRaw = inputs?.audiences?.trim();
+    const description = inputs?.description?.trim() || '';
+
+    if (!name) {
+      return { success: false, message: 'Authorization server name is required.' };
+    }
+    if (!audiencesRaw) {
+      return { success: false, message: 'At least one audience is required.' };
+    }
+
+    const audiences = audiencesRaw
+      .split(',')
+      .map((a) => a.trim())
+      .filter(Boolean);
+
+    if (audiences.length === 0) {
+      return { success: false, message: 'At least one valid audience is required.' };
+    }
+
+    // Check for existing auth server with same name
+    const allServers = await oktaFetch<any[]>(config, '/api/v1/authorizationServers');
+    const existing = allServers.find(
+      (s: any) => s.name?.toLowerCase() === name.toLowerCase()
+    );
+
+    if (existing) {
+      return {
+        success: true,
+        message: `Authorization server "${name}" already exists (ID: ${existing.id}). No changes made.`,
+        data: existing,
+      };
+    }
+
+    const created = await oktaFetch<any>(config, '/api/v1/authorizationServers', {
+      method: 'POST',
+      body: JSON.stringify({ name, description, audiences }),
+    });
+
+    return {
+      success: true,
+      message: `Authorization server "${name}" created successfully (ID: ${created.id}).`,
+      data: created,
+    };
+  } catch (err: any) {
+    console.error('createAuthServer error', err);
+    return {
+      success: false,
+      message: `Error creating authorization server: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+/**
+ * Add a custom claim to an authorization server
+ */
+export async function addCustomClaim(
+  config: OktaConfig,
+  inputs?: {
+    authServerId?: string;
+    claimName?: string;
+    valueExpression?: string;
+    claimType?: string;
+  }
+): Promise<OktaActionResult> {
+  try {
+    const authServerId = inputs?.authServerId?.trim();
+    const claimName = inputs?.claimName?.trim();
+    const valueExpression = inputs?.valueExpression?.trim();
+    const claimType = inputs?.claimType?.trim();
+
+    if (!authServerId) {
+      return { success: false, message: 'Authorization server is required.' };
+    }
+    if (!claimName) {
+      return { success: false, message: 'Claim name is required.' };
+    }
+    if (!valueExpression) {
+      return { success: false, message: 'Value expression is required.' };
+    }
+    if (!claimType) {
+      return { success: false, message: 'Claim type is required.' };
+    }
+
+    const created = await oktaFetch<any>(
+      config,
+      `/api/v1/authorizationServers/${authServerId}/claims`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: claimName,
+          status: 'ACTIVE',
+          claimType,
+          valueType: 'EXPRESSION',
+          value: valueExpression,
+          conditions: { scopes: [] },
+        }),
+      }
+    );
+
+    return {
+      success: true,
+      message: `Custom claim "${claimName}" added to authorization server (Claim ID: ${created.id}).`,
+      data: created,
+    };
+  } catch (err: any) {
+    console.error('addCustomClaim error', err);
+    return {
+      success: false,
+      message: `Error adding custom claim: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+/**
+ * Add a custom scope to an authorization server
+ */
+export async function addCustomScope(
+  config: OktaConfig,
+  inputs?: {
+    authServerId?: string;
+    scopeName?: string;
+    description?: string;
+    consent?: string;
+  }
+): Promise<OktaActionResult> {
+  try {
+    const authServerId = inputs?.authServerId?.trim();
+    const scopeName = inputs?.scopeName?.trim();
+    const description = inputs?.description?.trim() || '';
+    const consent = inputs?.consent?.trim() || 'IMPLICIT';
+
+    if (!authServerId) {
+      return { success: false, message: 'Authorization server is required.' };
+    }
+    if (!scopeName) {
+      return { success: false, message: 'Scope name is required.' };
+    }
+
+    const created = await oktaFetch<any>(
+      config,
+      `/api/v1/authorizationServers/${authServerId}/scopes`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: scopeName,
+          description,
+          consent,
+          metadataPublish: 'ALL_CLIENTS',
+        }),
+      }
+    );
+
+    return {
+      success: true,
+      message: `Custom scope "${scopeName}" added to authorization server (Scope ID: ${created.id}).`,
+      data: created,
+    };
+  } catch (err: any) {
+    console.error('addCustomScope error', err);
+    return {
+      success: false,
+      message: `Error adding custom scope: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
 /**
  * Create Entitlement Bundles for Access Requests
  * Creates bundles that package entitlement values for easy requesting

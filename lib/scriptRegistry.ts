@@ -22,6 +22,13 @@ import {
   runPolicySimulation,
   setupSodDemo,
   createEntitlementBundles,
+  createNetworkZone,
+  listNetworkZones,
+  createTrustedOrigin,
+  listTrustedOrigins,
+  createAuthServer,
+  addCustomClaim,
+  addCustomScope,
 } from '../app/actions/oktaActions';
 
 export type HandlerFn = (
@@ -65,6 +72,39 @@ const handlers: Record<string, HandlerFn> = {
       bundle1ValueId: (inputs?.bundle1ValueId as string) || '',
       bundle2Name: inputs?.bundle2Name as string | undefined,
       bundle2ValueId: inputs?.bundle2ValueId as string | undefined,
+    }),
+  'create-network-zone': (config, inputs) =>
+    createNetworkZone(config, {
+      name: inputs?.name as string | undefined,
+      gateways: inputs?.gateways as string | undefined,
+    }),
+  'list-network-zones': (config) => listNetworkZones(config),
+  'create-trusted-origin': (config, inputs) =>
+    createTrustedOrigin(config, {
+      name: inputs?.name as string | undefined,
+      origin: inputs?.origin as string | undefined,
+      scopes: inputs?.scopes as string | string[] | undefined,
+    }),
+  'list-trusted-origins': (config) => listTrustedOrigins(config),
+  'create-auth-server': (config, inputs) =>
+    createAuthServer(config, {
+      name: inputs?.name as string | undefined,
+      audiences: inputs?.audiences as string | undefined,
+      description: inputs?.description as string | undefined,
+    }),
+  'add-custom-claim': (config, inputs) =>
+    addCustomClaim(config, {
+      authServerId: inputs?.authServerId as string | undefined,
+      claimName: inputs?.claimName as string | undefined,
+      valueExpression: inputs?.valueExpression as string | undefined,
+      claimType: inputs?.claimType as string | undefined,
+    }),
+  'add-custom-scope': (config, inputs) =>
+    addCustomScope(config, {
+      authServerId: inputs?.authServerId as string | undefined,
+      scopeName: inputs?.scopeName as string | undefined,
+      description: inputs?.description as string | undefined,
+      consent: inputs?.consent as string | undefined,
     }),
 };
 

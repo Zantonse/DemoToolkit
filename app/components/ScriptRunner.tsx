@@ -127,6 +127,26 @@ export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
           const body = await response.json().catch(() => null);
           console.error('Failed to load applications', body?.error || response.statusText);
         }
+      } else if (fieldName === 'authServerId') {
+        const response = await fetch('/api/okta/auth-servers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orgUrl, apiToken }),
+          cache: 'no-store',
+        });
+
+        if (response.ok) {
+          const payload = await response.json();
+          const servers = payload.authServers || [];
+          const options = servers.map((s: { id: string; name: string; audiences: string[] }) => ({
+            value: s.id,
+            label: `${s.name} (${s.audiences?.join(', ') ?? s.id})`,
+          }));
+          setDynamicOptions((prev) => ({ ...prev, [cacheKey]: options }));
+        } else {
+          const body = await response.json().catch(() => null);
+          console.error('Failed to load authorization servers', body?.error || response.statusText);
+        }
       }
     } catch (error) {
       console.error('Error loading dynamic options:', error);
