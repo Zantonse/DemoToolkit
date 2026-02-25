@@ -2,6 +2,7 @@
 'use server';
 
 import type { OktaConfig, OktaActionResult } from '../../lib/types/okta';
+import type { LogFn } from '../../lib/types/logging';
 import {
   normalizeOrgUrl,
   oktaHeaders,
@@ -21,12 +22,14 @@ import { getOAuthAccessToken, oigFetch } from './helpers/oauth';
  * - If missing → create and activate
  */
 export async function enableFIDO2(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
 
   try {
+    log({ level: 'info', message: 'Checking FIDO2/WebAuthn authenticator status...' });
     // List authenticators
     const listRes = await fetch(`${baseUrl}/api/v1/authenticators`, {
       headers,
@@ -126,12 +129,14 @@ export async function enableFIDO2(
  * - Else → create
  */
 export async function createSuperAdminsGroup(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult<OktaGroup>> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
 
   try {
+    log({ level: 'info', message: 'Creating Super Administrators group and assigning SUPER_ADMIN role...' });
     const groupName = 'Super Administrators';
 
     // Try to find existing group by name
@@ -481,7 +486,8 @@ function buildDemoUserProfiles(count: number) {
  * - Handles “already exists” gracefully
  */
 export async function populateDemoUsers(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
@@ -489,11 +495,15 @@ export async function populateDemoUsers(
   try {
     const profiles = buildDemoUserProfiles(15);
 
+    log({ level: 'info', message: `Starting demo user population — creating up to ${profiles.length} users...` });
+
     const created: any[] = [];
     const skipped: { email: string; reason: string }[] = [];
     const errors: { email: string; error: string }[] = [];
 
-    for (const profile of profiles) {
+    for (let i = 0; i < profiles.length; i++) {
+      const profile = profiles[i];
+      log({ level: 'info', message: `[${i + 1}/${profiles.length}] Creating user: ${profile.firstName} ${profile.lastName} (${profile.email})`, step: `user-${i + 1}` });
       try {
         const res = await fetch(
           `${baseUrl}/api/v1/users?activate=true`,
@@ -519,12 +529,13 @@ export async function populateDemoUsers(
         if (res.ok) {
           const user = await res.json();
           created.push(user);
+          log({ level: 'success', message: `Created: ${profile.firstName} ${profile.lastName} (${profile.department})` });
           continue;
         }
 
         const body = await safeJson<any>(res);
 
-        // Handle "already exists" as a non-fatal “skipped”
+        // Handle “already exists” as a non-fatal “skipped”
         const causeText =
           body?.errorCauses?.map((c: any) => c?.errorSummary).join('; ') ?? '';
 
@@ -536,6 +547,7 @@ export async function populateDemoUsers(
             email: profile.email,
             reason: causeText,
           });
+          log({ level: 'warn', message: `Skipped (already exists): ${profile.email}` });
           continue;
         }
 
@@ -544,13 +556,17 @@ export async function populateDemoUsers(
           error:
             body?.errorSummary || causeText || res.statusText,
         });
+        log({ level: 'error', message: `Failed to create ${profile.email}: ${body?.errorSummary || causeText || res.statusText}` });
       } catch (innerErr: any) {
         errors.push({
           email: profile.email,
           error: innerErr.message ?? String(innerErr),
         });
+        log({ level: 'error', message: `Error creating ${profile.email}: ${innerErr.message ?? String(innerErr)}` });
       }
     }
+
+    log({ level: 'info', message: `User population complete — Created: ${created.length}, Skipped: ${skipped.length}, Errors: ${errors.length}` });
 
     const summary = {
       createdCount: created.length,
@@ -588,12 +604,14 @@ export async function populateDemoUsers(
  * with pre-configured SAML 2.0 settings.
  */
 export async function addSalesforceSAMLApp(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
 
   try {
+    log({ level: 'info', message: 'Adding Salesforce SAML 2.0 application from Okta Integration Network...' });
     // Create Salesforce app with SAML 2.0 configuration
     const appPayload = {
       name: 'salesforce',
@@ -671,12 +689,14 @@ export async function addSalesforceSAMLApp(
  * Note: Box is identified as "boxnet" in the Okta catalog.
  */
 export async function addBoxApp(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
 
   try {
+    log({ level: 'info', message: 'Adding Box SAML 2.0 application from Okta Integration Network...' });
     // Create Box app with SAML 2.0 configuration
     // Using "boxnet" as the name (Box's identifier in Okta catalog)
     const appPayload = {
@@ -759,12 +779,14 @@ export async function addBoxApp(
  * - Start: 1 day from creation
  */
 export async function createAccessCertificationCampaign(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
 
   try {
+    log({ level: 'info', message: 'Creating Access Certification Campaign with quarterly recurrence...' });
     // Step 1: Create or find the Fallback Reviewer user
     
     const fallbackEmail = 'fallback.reviewer@atko.email';
@@ -949,7 +971,8 @@ export async function createAccessCertificationCampaign(
  * their profile.department attribute.
  */
 export async function createStandardDepartmentGroups(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
@@ -965,10 +988,13 @@ export async function createStandardDepartmentGroups(
   ];
 
   try {
+    log({ level: 'info', message: `Creating ${departments.length} standard department groups with group rules...` });
     const results: any[] = [];
     const errors: any[] = [];
 
-    for (const dept of departments) {
+    for (let deptIdx = 0; deptIdx < departments.length; deptIdx++) {
+      const dept = departments[deptIdx];
+      log({ level: 'info', message: `[${deptIdx + 1}/${departments.length}] Processing department: ${dept}`, step: `dept-${deptIdx + 1}` });
       try {
         // Step 1: Create Group
         let groupId: string;
@@ -987,6 +1013,7 @@ export async function createStandardDepartmentGroups(
         if (existingGroup) {
           groupId = existingGroup.id;
           results.push({ type: 'group', name: dept, status: 'exists', id: groupId });
+          log({ level: 'warn', message: `  Group already exists: ${dept}` });
         } else {
           const createGroupRes = await fetch(`${baseUrl}/api/v1/groups`, {
             method: 'POST',
@@ -1001,10 +1028,11 @@ export async function createStandardDepartmentGroups(
           });
 
           if (!createGroupRes.ok) throw new Error(`Failed to create group ${dept}`);
-          
+
           const newGroup = await createGroupRes.json();
           groupId = newGroup.id;
           results.push({ type: 'group', name: dept, status: 'created', id: groupId });
+          log({ level: 'success', message: `  Group created: ${dept}` });
         }
 
         // Step 2: Create Group Rule
@@ -1040,7 +1068,8 @@ export async function createStandardDepartmentGroups(
         if (createRuleRes.ok) {
           const rule = await createRuleRes.json();
           results.push({ type: 'rule', name: ruleName, status: 'created', id: rule.id });
-          
+          log({ level: 'success', message: `  Rule created: ${ruleName}` });
+
           // Activate the rule
           if (rule.status === 'INACTIVE') {
             await fetch(`${baseUrl}/api/v1/groups/rules/${rule.id}/lifecycle/activate`, {
@@ -1053,6 +1082,7 @@ export async function createStandardDepartmentGroups(
           const body = await safeJson<any>(createRuleRes);
           if (body?.errorCode === 'E0000007' || body?.errorSummary?.includes('already exists')) {
              results.push({ type: 'rule', name: ruleName, status: 'exists' });
+             log({ level: 'warn', message: `  Rule already exists: ${ruleName}` });
           } else {
             throw new Error(`Failed to create rule ${ruleName}: ${body?.errorSummary}`);
           }
@@ -1060,8 +1090,11 @@ export async function createStandardDepartmentGroups(
 
       } catch (innerErr: any) {
         errors.push({ department: dept, error: innerErr.message });
+        log({ level: 'error', message: `  Error processing ${dept}: ${innerErr.message}` });
       }
     }
+
+    log({ level: 'info', message: `Department groups complete — Created/Found: ${results.length}, Errors: ${errors.length}` });
 
     const success = errors.length === 0;
 
@@ -1090,7 +1123,8 @@ export async function createStandardDepartmentGroups(
  * - Windows Assurance Policy
  */
 export async function createDeviceAssurancePolicies(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
@@ -1103,6 +1137,7 @@ export async function createDeviceAssurancePolicies(
   ];
 
   try {
+    log({ level: 'info', message: `Creating ${platforms.length} device assurance policies (Android, iOS, macOS, Windows)...` });
     // First, check if the device assurance API is available
     const checkRes = await fetch(`${baseUrl}/api/v1/device-assurances`, {
       method: 'GET',
@@ -1123,15 +1158,18 @@ export async function createDeviceAssurancePolicies(
     // First, try to list existing policies to check format
     const existingPolicies = await checkRes.json().catch(() => []);
 
-    for (const p of platforms) {
+    for (let pIdx = 0; pIdx < platforms.length; pIdx++) {
+      const p = platforms[pIdx];
+      log({ level: 'info', message: `[${pIdx + 1}/${platforms.length}] Processing: ${p.name}`, step: `platform-${pIdx + 1}` });
       try {
         // Check if policy with this name already exists
-        const existing = Array.isArray(existingPolicies) 
+        const existing = Array.isArray(existingPolicies)
           ? existingPolicies.find((pol: any) => pol.name === p.name || pol.platform === p.platform)
           : null;
 
         if (existing) {
           results.push({ name: p.name, status: 'exists', id: existing.id });
+          log({ level: 'warn', message: `  Already exists: ${p.name}` });
           continue;
         }
 
@@ -1169,13 +1207,15 @@ export async function createDeviceAssurancePolicies(
         if (res.ok) {
           const policy = await res.json();
           results.push({ name: p.name, status: 'created', id: policy.id });
+          log({ level: 'success', message: `  Created: ${p.name}` });
         } else {
           const body = await safeJson<any>(res);
           console.error(`✗ Failed to create ${p.name}:`, body);
-          
+
           // Handle "already exists" gracefully
           if (body?.errorCode === 'E0000007' || body?.errorSummary?.includes('already exists')) {
             results.push({ name: p.name, status: 'exists' });
+            log({ level: 'warn', message: `  Already exists: ${p.name}` });
           } else {
             const errorMsg = `${body?.errorSummary || res.statusText}${body?.errorCauses ? ` - ${JSON.stringify(body.errorCauses)}` : ''}`;
             throw new Error(errorMsg);
@@ -1184,6 +1224,7 @@ export async function createDeviceAssurancePolicies(
       } catch (innerErr: any) {
         console.error(`Error processing ${p.name}:`, innerErr);
         errors.push({ name: p.name, error: innerErr.message });
+        log({ level: 'error', message: `  Error creating ${p.name}: ${innerErr.message}` });
       }
     }
 
@@ -1221,12 +1262,14 @@ export async function createDeviceAssurancePolicies(
  * Each rule is named after the detection type and set to "No Action".
  */
 export async function configureEntityRiskPolicy(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
 
   try {
+    log({ level: 'info', message: 'Reviewing Entity Risk Policy configuration...' });
     // Step 1: First, let's check what policy types are available
     const allPoliciesRes = await fetch(`${baseUrl}/api/v1/policies`, {
       method: 'GET',
@@ -1377,10 +1420,12 @@ export async function configureEntityRiskPolicy(
  */
 export async function addNewAdministrator(
   config: OktaConfig,
-  params: { firstName: string; lastName: string; email: string }
+  params: { firstName: string; lastName: string; email: string },
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
     const { firstName, lastName, email } = params;
+    log({ level: 'info', message: `Creating administrator account for ${firstName} ${lastName} (${email})...` });
 
     // Validate inputs
     if (!firstName || !lastName || !email) {
@@ -1513,9 +1558,11 @@ export async function addNewAdministrator(
  * - Creates "Contractors" realm
  */
 export async function setupRealms(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
+    log({ level: 'info', message: 'Setting up Realms — renaming Default to Employees, creating Partners and Contractors...' });
     // 1. List existing realms
     // Note: Realms API might be feature-flagged or require OIE.
     const realms = await oktaFetch<any[]>(config, '/api/v1/realms');
@@ -1618,13 +1665,15 @@ export async function setupRealms(
  */
 export async function runPolicySimulation(
   config: OktaConfig,
-  params: { appInstance: string; policyTypes?: string[] }
+  params: { appInstance: string; policyTypes?: string[] },
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const headers = oktaHeaders(config);
 
   try {
     const { appInstance, policyTypes } = params;
+    log({ level: 'info', message: `Running policy simulation for app instance: ${appInstance}...` });
 
     // Validate inputs
     if (!appInstance) {
@@ -1749,7 +1798,8 @@ export async function runPolicySimulation(
  *  - setupRealms
  */
 export async function runAllScripts(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<
   OktaActionResult<{
     enableFIDO2: OktaActionResult;
@@ -1767,34 +1817,54 @@ export async function runAllScripts(
   const results: any = {};
 
   // 1) FIDO2
-  results.enableFIDO2 = await enableFIDO2(config);
+  log({ level: 'info', message: '--- [1/10] Enable FIDO2/WebAuthn ---' });
+  results.enableFIDO2 = await enableFIDO2(config, log);
+  log({ level: results.enableFIDO2.success ? 'success' : 'error', message: `[1/10] FIDO2: ${results.enableFIDO2.message}` });
 
   // 2) Super Admins group (now auto-assigns SUPER_ADMIN role)
-  results.createSuperAdminsGroup = await createSuperAdminsGroup(config);
+  log({ level: 'info', message: '--- [2/10] Create Super Administrators Group ---' });
+  results.createSuperAdminsGroup = await createSuperAdminsGroup(config, log);
+  log({ level: results.createSuperAdminsGroup.success ? 'success' : 'error', message: `[2/10] Super Admins Group: ${results.createSuperAdminsGroup.message}` });
 
   // 3) Demo users
-  results.populateDemoUsers = await populateDemoUsers(config);
+  log({ level: 'info', message: '--- [3/10] Populate Demo Users ---' });
+  results.populateDemoUsers = await populateDemoUsers(config, log);
+  log({ level: results.populateDemoUsers.success ? 'success' : 'error', message: `[3/10] Demo Users: ${results.populateDemoUsers.message}` });
 
   // 5) Standard Department Groups
-  results.createStandardDepartmentGroups = await createStandardDepartmentGroups(config);
+  log({ level: 'info', message: '--- [4/10] Create Standard Department Groups ---' });
+  results.createStandardDepartmentGroups = await createStandardDepartmentGroups(config, log);
+  log({ level: results.createStandardDepartmentGroups.success ? 'success' : 'error', message: `[4/10] Department Groups: ${results.createStandardDepartmentGroups.message}` });
 
   // 6) Device Assurance Policies
-  results.createDeviceAssurancePolicies = await createDeviceAssurancePolicies(config);
+  log({ level: 'info', message: '--- [5/10] Create Device Assurance Policies ---' });
+  results.createDeviceAssurancePolicies = await createDeviceAssurancePolicies(config, log);
+  log({ level: results.createDeviceAssurancePolicies.success ? 'success' : 'error', message: `[5/10] Device Assurance: ${results.createDeviceAssurancePolicies.message}` });
 
   // 7) Entity Risk Policy
-  results.configureEntityRiskPolicy = await configureEntityRiskPolicy(config);
+  log({ level: 'info', message: '--- [6/10] Configure Entity Risk Policy ---' });
+  results.configureEntityRiskPolicy = await configureEntityRiskPolicy(config, log);
+  log({ level: results.configureEntityRiskPolicy.success ? 'success' : 'error', message: `[6/10] Entity Risk: ${results.configureEntityRiskPolicy.message}` });
 
   // 8) Salesforce SAML app
-  results.addSalesforceSAMLApp = await addSalesforceSAMLApp(config);
+  log({ level: 'info', message: '--- [7/10] Add Salesforce SAML App ---' });
+  results.addSalesforceSAMLApp = await addSalesforceSAMLApp(config, log);
+  log({ level: results.addSalesforceSAMLApp.success ? 'success' : 'error', message: `[7/10] Salesforce App: ${results.addSalesforceSAMLApp.message}` });
 
   // 9) Box app
-  results.addBoxApp = await addBoxApp(config);
+  log({ level: 'info', message: '--- [8/10] Add Box App ---' });
+  results.addBoxApp = await addBoxApp(config, log);
+  log({ level: results.addBoxApp.success ? 'success' : 'error', message: `[8/10] Box App: ${results.addBoxApp.message}` });
 
   // 10) Access Certification Campaign
-  results.createAccessCertificationCampaign = await createAccessCertificationCampaign(config);
+  log({ level: 'info', message: '--- [9/10] Create Access Certification Campaign ---' });
+  results.createAccessCertificationCampaign = await createAccessCertificationCampaign(config, log);
+  log({ level: results.createAccessCertificationCampaign.success ? 'success' : 'error', message: `[9/10] Access Certification: ${results.createAccessCertificationCampaign.message}` });
 
   // 11) Setup Realms
-  results.setupRealms = await setupRealms(config);
+  log({ level: 'info', message: '--- [10/10] Setup Realms ---' });
+  results.setupRealms = await setupRealms(config, log);
+  log({ level: results.setupRealms.success ? 'success' : 'error', message: `[10/10] Realms: ${results.setupRealms.message}` });
 
   const overallSuccess = Object.values<OktaActionResult>(results).every((r) => r.success);
 
@@ -1852,7 +1922,8 @@ interface EntitlementBundle {
  */
 export async function setupSodDemo(
   config: OktaConfig,
-  params: SetupSodDemoParams
+  params: SetupSodDemoParams,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult<{
   entitlement?: Entitlement;
   riskRule?: RiskRule;
@@ -1879,7 +1950,10 @@ export async function setupSodDemo(
   const entitlementExternalValue = entitlementName.toLowerCase().replace(/\s+/g, '_');
 
   try {
+    log({ level: 'info', message: 'Starting SoD Demo setup — entitlement, risk rule, and bundles...' });
+
     // Step 1: Get OAuth access token using private_key_jwt
+    log({ level: 'info', message: '[1/4] Obtaining OAuth access token...', step: 'oauth-token' });
     const accessToken = await getOAuthAccessToken(
       config.orgUrl,
       config.clientId,
@@ -1892,6 +1966,7 @@ export async function setupSodDemo(
         'okta.governance.accessRequests.manage',
       ]
     );
+    log({ level: 'success', message: '[1/4] OAuth token obtained.' });
 
     // Step 2: Get org ID for constructing resource ORN
     const orgInfo = await oigFetch<{ id: string }>(
@@ -1902,6 +1977,7 @@ export async function setupSodDemo(
     const orgId = orgInfo.id;
 
     // Step 3: Create entitlement with values
+    log({ level: 'info', message: `[2/4] Creating entitlement "${params.entitlementName || 'NetSuite Role'}" with values...`, step: 'entitlement' });
     const entitlementPayload = {
       name: entitlementName,
       externalValue: entitlementExternalValue,
@@ -1935,7 +2011,7 @@ export async function setupSodDemo(
         body: JSON.stringify(entitlementPayload),
       }
     );
-
+    log({ level: 'success', message: `[2/4] Entitlement created: ${entitlement.name} (${entitlement.id})` });
 
     // Get the value IDs from the created entitlement
     const value1 = entitlement.values?.find(v => v.externalValue === role1ExternalValue);
@@ -1950,6 +2026,7 @@ export async function setupSodDemo(
     }
 
     // Step 4: Create SoD Risk Rule (optional - may fail due to API validation)
+    log({ level: 'info', message: `[3/4] Creating SoD risk rule for ${role1Name} vs ${role2Name}...`, step: 'risk-rule' });
     const resourceOrn = `orn:okta:idp:${orgId}:apps:netsuite:${appId}`;
 
     let riskRule: RiskRule | null = null;
@@ -2007,9 +2084,15 @@ export async function setupSodDemo(
     } catch (riskErr: any) {
       console.warn(`Could not create risk rule: ${riskErr.message}`);
       console.warn('You can create the SoD risk rule manually in Admin Console > Identity Governance > Access Certifications > Risk Rules');
+      log({ level: 'warn', message: `[3/4] Risk rule could not be created via API — create it manually in Admin Console.` });
+    }
+
+    if (riskRule) {
+      log({ level: 'success', message: `[3/4] Risk rule created: ${riskRule.name} (${riskRule.id})` });
     }
 
     // Step 5: Create Entitlement Bundles for Access Requests
+    log({ level: 'info', message: '[4/4] Creating entitlement bundles for Access Requests...', step: 'bundles' });
     const bundles: EntitlementBundle[] = [];
 
     // Bundle for Role 1
@@ -2036,8 +2119,10 @@ export async function setupSodDemo(
         }
       );
       bundles.push(bundle1);
+      log({ level: 'success', message: `  Bundle created: ${bundle1.name} (${bundle1.id})` });
     } catch (bundleErr: any) {
       console.warn(`Could not create bundle for ${role1Name}: ${bundleErr.message}`);
+      log({ level: 'warn', message: `  Could not create bundle for ${role1Name}: ${bundleErr.message}` });
     }
 
     // Bundle for Role 2
@@ -2064,8 +2149,10 @@ export async function setupSodDemo(
         }
       );
       bundles.push(bundle2);
+      log({ level: 'success', message: `  Bundle created: ${bundle2.name} (${bundle2.id})` });
     } catch (bundleErr: any) {
       console.warn(`Could not create bundle for ${role2Name}: ${bundleErr.message}`);
+      log({ level: 'warn', message: `  Could not create bundle for ${role2Name}: ${bundleErr.message}` });
     }
 
     // Build success message
@@ -2125,11 +2212,13 @@ export async function setupSodDemo(
  */
 export async function createNetworkZone(
   config: OktaConfig,
-  inputs?: { name?: string; gateways?: string }
+  inputs?: { name?: string; gateways?: string },
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
     const name = inputs?.name?.trim();
     const gatewaysRaw = inputs?.gateways?.trim();
+    log({ level: 'info', message: `Creating network zone "${name || '(unnamed)'}"...` });
 
     if (!name) {
       return { success: false, message: 'Zone name is required.' };
@@ -2193,9 +2282,11 @@ export async function createNetworkZone(
  * List all network zones
  */
 export async function listNetworkZones(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
+    log({ level: 'info', message: 'Fetching all network zones...' });
     const zones = await oktaFetch<any[]>(config, '/api/v1/zones');
 
     if (zones.length === 0) {
@@ -2237,12 +2328,14 @@ export async function listNetworkZones(
  */
 export async function createTrustedOrigin(
   config: OktaConfig,
-  inputs?: { name?: string; origin?: string; scopes?: string | string[] }
+  inputs?: { name?: string; origin?: string; scopes?: string | string[] },
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
     const name = inputs?.name?.trim();
     const origin = inputs?.origin?.trim();
     const rawScopes = inputs?.scopes;
+    log({ level: 'info', message: `Creating trusted origin "${name || '(unnamed)'}" for ${origin || '(no URL)'}...` });
 
     if (!name) {
       return { success: false, message: 'Origin name is required.' };
@@ -2303,9 +2396,11 @@ export async function createTrustedOrigin(
  * List all trusted origins
  */
 export async function listTrustedOrigins(
-  config: OktaConfig
+  config: OktaConfig,
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
+    log({ level: 'info', message: 'Fetching all trusted origins...' });
     const origins = await oktaFetch<any[]>(config, '/api/v1/trustedOrigins');
 
     if (origins.length === 0) {
@@ -2346,12 +2441,14 @@ export async function listTrustedOrigins(
  */
 export async function createAuthServer(
   config: OktaConfig,
-  inputs?: { name?: string; audiences?: string; description?: string }
+  inputs?: { name?: string; audiences?: string; description?: string },
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
     const name = inputs?.name?.trim();
     const audiencesRaw = inputs?.audiences?.trim();
     const description = inputs?.description?.trim() || '';
+    log({ level: 'info', message: `Creating authorization server "${name || '(unnamed)'}"...` });
 
     if (!name) {
       return { success: false, message: 'Authorization server name is required.' };
@@ -2412,13 +2509,15 @@ export async function addCustomClaim(
     claimName?: string;
     valueExpression?: string;
     claimType?: string;
-  }
+  },
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
     const authServerId = inputs?.authServerId?.trim();
     const claimName = inputs?.claimName?.trim();
     const valueExpression = inputs?.valueExpression?.trim();
     const claimType = inputs?.claimType?.trim();
+    log({ level: 'info', message: `Adding custom claim "${claimName || '(unnamed)'}" to authorization server...` });
 
     if (!authServerId) {
       return { success: false, message: 'Authorization server is required.' };
@@ -2473,13 +2572,15 @@ export async function addCustomScope(
     scopeName?: string;
     description?: string;
     consent?: string;
-  }
+  },
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
     const authServerId = inputs?.authServerId?.trim();
     const scopeName = inputs?.scopeName?.trim();
     const description = inputs?.description?.trim() || '';
     const consent = inputs?.consent?.trim() || 'IMPLICIT';
+    log({ level: 'info', message: `Adding custom scope "${scopeName || '(unnamed)'}" to authorization server...` });
 
     if (!authServerId) {
       return { success: false, message: 'Authorization server is required.' };
@@ -2528,7 +2629,8 @@ export async function createEntitlementBundles(
     bundle1ValueId: string;
     bundle2Name?: string;
     bundle2ValueId?: string;
-  }
+  },
+  log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   if (!config.clientId || !config.privateKey || !config.keyId) {
     return {
@@ -2547,6 +2649,7 @@ export async function createEntitlementBundles(
   } = options;
 
   try {
+    log({ level: 'info', message: 'Creating entitlement bundles for Access Requests...' });
     // Step 1: Get OAuth access token
     const accessToken = await getOAuthAccessToken(
       config.orgUrl,
@@ -2562,6 +2665,7 @@ export async function createEntitlementBundles(
     const bundles: EntitlementBundle[] = [];
 
     // Create first bundle
+    log({ level: 'info', message: `Creating bundle 1: "${bundle1Name}"...` });
     const bundle1Payload = {
       name: bundle1Name,
       description: `Access bundle for ${bundle1Name}`,
@@ -2584,9 +2688,11 @@ export async function createEntitlementBundles(
       }
     );
     bundles.push(bundle1);
+    log({ level: 'success', message: `Bundle created: ${bundle1.name} (${bundle1.id})` });
 
     // Create second bundle if provided
     if (bundle2Name && bundle2ValueId) {
+      log({ level: 'info', message: `Creating bundle 2: "${bundle2Name}"...` });
       const bundle2Payload = {
         name: bundle2Name,
         description: `Access bundle for ${bundle2Name}`,
@@ -2609,6 +2715,7 @@ export async function createEntitlementBundles(
         }
       );
       bundles.push(bundle2);
+      log({ level: 'success', message: `Bundle created: ${bundle2.name} (${bundle2.id})` });
     }
 
     const successParts = [

@@ -7,6 +7,7 @@
 
 import type { OktaConfig, OktaActionResult } from './types/okta';
 import type { ScriptId } from './data/automationScripts';
+import type { LogFn } from './types/logging';
 import {
   enableFIDO2,
   createSuperAdminsGroup,
@@ -33,79 +34,80 @@ import {
 
 export type HandlerFn = (
   config: OktaConfig,
-  inputs?: Record<string, string | string[] | undefined>
+  inputs?: Record<string, string | string[] | undefined>,
+  log?: LogFn
 ) => Promise<OktaActionResult>;
 
 const handlers: Record<string, HandlerFn> = {
-  'enable-fido2': (config) => enableFIDO2(config),
-  'create-super-admins-group': (config) => createSuperAdminsGroup(config),
-  'populate-demo-users': (config) => populateDemoUsers(config),
-  'create-standard-department-groups': (config) => createStandardDepartmentGroups(config),
-  'create-device-assurance-policies': (config) => createDeviceAssurancePolicies(config),
-  'configure-entity-risk-policy': (config) => configureEntityRiskPolicy(config),
-  'add-salesforce-saml-app': (config) => addSalesforceSAMLApp(config),
-  'add-box-app': (config) => addBoxApp(config),
-  'create-access-certification-campaign': (config) => createAccessCertificationCampaign(config),
-  'setup-realms': (config) => setupRealms(config),
-  'add-new-administrator': (config, inputs) =>
+  'enable-fido2': (config, _inputs, log) => enableFIDO2(config, log),
+  'create-super-admins-group': (config, _inputs, log) => createSuperAdminsGroup(config, log),
+  'populate-demo-users': (config, _inputs, log) => populateDemoUsers(config, log),
+  'create-standard-department-groups': (config, _inputs, log) => createStandardDepartmentGroups(config, log),
+  'create-device-assurance-policies': (config, _inputs, log) => createDeviceAssurancePolicies(config, log),
+  'configure-entity-risk-policy': (config, _inputs, log) => configureEntityRiskPolicy(config, log),
+  'add-salesforce-saml-app': (config, _inputs, log) => addSalesforceSAMLApp(config, log),
+  'add-box-app': (config, _inputs, log) => addBoxApp(config, log),
+  'create-access-certification-campaign': (config, _inputs, log) => createAccessCertificationCampaign(config, log),
+  'setup-realms': (config, _inputs, log) => setupRealms(config, log),
+  'add-new-administrator': (config, inputs, log) =>
     addNewAdministrator(config, {
       firstName: (inputs?.firstName as string) || '',
       lastName: (inputs?.lastName as string) || '',
       email: (inputs?.email as string) || '',
-    }),
-  'run-policy-simulation': (config, inputs) =>
+    }, log),
+  'run-policy-simulation': (config, inputs, log) =>
     runPolicySimulation(config, {
       appInstance: (inputs?.appInstance as string) || '',
       policyTypes: inputs?.policyTypes as string[] | undefined,
-    }),
-  'setup-sod-demo': (config, inputs) =>
+    }, log),
+  'setup-sod-demo': (config, inputs, log) =>
     setupSodDemo(config, {
       appId: (inputs?.appId as string) || '',
       entitlementName: inputs?.entitlementName as string | undefined,
       role1Name: inputs?.role1Name as string | undefined,
       role2Name: inputs?.role2Name as string | undefined,
-    }),
-  'create-entitlement-bundles': (config, inputs) =>
+    }, log),
+  'create-entitlement-bundles': (config, inputs, log) =>
     createEntitlementBundles(config, {
       entitlementId: (inputs?.entitlementId as string) || '',
       bundle1Name: (inputs?.bundle1Name as string) || '',
       bundle1ValueId: (inputs?.bundle1ValueId as string) || '',
       bundle2Name: inputs?.bundle2Name as string | undefined,
       bundle2ValueId: inputs?.bundle2ValueId as string | undefined,
-    }),
-  'create-network-zone': (config, inputs) =>
+    }, log),
+  'create-network-zone': (config, inputs, log) =>
     createNetworkZone(config, {
       name: inputs?.name as string | undefined,
       gateways: inputs?.gateways as string | undefined,
-    }),
-  'list-network-zones': (config) => listNetworkZones(config),
-  'create-trusted-origin': (config, inputs) =>
+    }, log),
+  'list-network-zones': (config, _inputs, log) => listNetworkZones(config, log),
+  'create-trusted-origin': (config, inputs, log) =>
     createTrustedOrigin(config, {
       name: inputs?.name as string | undefined,
       origin: inputs?.origin as string | undefined,
       scopes: inputs?.scopes as string | string[] | undefined,
-    }),
-  'list-trusted-origins': (config) => listTrustedOrigins(config),
-  'create-auth-server': (config, inputs) =>
+    }, log),
+  'list-trusted-origins': (config, _inputs, log) => listTrustedOrigins(config, log),
+  'create-auth-server': (config, inputs, log) =>
     createAuthServer(config, {
       name: inputs?.name as string | undefined,
       audiences: inputs?.audiences as string | undefined,
       description: inputs?.description as string | undefined,
-    }),
-  'add-custom-claim': (config, inputs) =>
+    }, log),
+  'add-custom-claim': (config, inputs, log) =>
     addCustomClaim(config, {
       authServerId: inputs?.authServerId as string | undefined,
       claimName: inputs?.claimName as string | undefined,
       valueExpression: inputs?.valueExpression as string | undefined,
       claimType: inputs?.claimType as string | undefined,
-    }),
-  'add-custom-scope': (config, inputs) =>
+    }, log),
+  'add-custom-scope': (config, inputs, log) =>
     addCustomScope(config, {
       authServerId: inputs?.authServerId as string | undefined,
       scopeName: inputs?.scopeName as string | undefined,
       description: inputs?.description as string | undefined,
       consent: inputs?.consent as string | undefined,
-    }),
+    }, log),
 };
 
 export function getHandler(scriptId: ScriptId): HandlerFn | undefined {
