@@ -45,13 +45,24 @@ The app uses Next.js Server Actions (`'use server'`) for all Okta API calls. Thi
 - **`app/context/OktaContext.tsx`** — React Context for credentials stored in browser localStorage (orgUrl, apiToken, authMode, clientId, privateKey, keyId).
 - **`app/context/ThemeContext.tsx`** — Dark/light/system theme toggle with localStorage persistence and system preference detection.
 
+### Streaming Execution (SSE)
+
+Individual script execution uses Server-Sent Events for real-time progress feedback:
+
+- **`app/api/scripts/run/route.ts`** — POST SSE endpoint. Receives `{ scriptId, config, inputs }`, invokes the handler from the registry with a `log` callback, streams `LogEntry` JSON objects back as `data:` events. The final event includes `done: true` with the `OktaActionResult`.
+- **`app/hooks/useScriptStream.ts`** — Client hook that POSTs to `/api/scripts/run`, reads the SSE stream via `ReadableStream.getReader()`, and maintains state: `logs`, `isStreaming`, `result`, `scriptId`, `error`. Exposes `run()`, `cancel()`, `clearLogs()`.
+- **`app/components/LogPanel.tsx`** — Terminal-style bottom panel (always dark-themed, bg-slate-900). Shows timestamped, level-colored log entries with step progress badges. Features drag-to-resize, auto-scroll, copy-all, cancel button. Rendered by AppShell below the main content area.
+- **`LogFn` callback pattern** — Every handler in `oktaActions.ts` accepts an optional `log: LogFn = () => {}` parameter. The SSE route provides a real `log` that streams entries; direct server action calls (e.g., `runAllScripts`) use the default no-op. New handlers should accept `log` as their last parameter.
+- **`runAllScripts`** still uses direct server actions (no SSE streaming) — it calls handlers sequentially and returns a combined result.
+
 ### Key Data Flow
 1. Credentials stored in browser localStorage via `OktaContext`
 2. User navigates via Sidebar to a category or view
 3. `ScriptRunner` displays filtered scripts; user clicks "Run"
-4. Registry dispatches to the correct Server Action from `oktaActions.ts`
-5. Server Action makes Okta API calls using SSWS token auth (or OAuth for OIG APIs)
-6. Result displayed inline + toast notification
+4. For individual scripts: `useScriptStream.run()` POSTs to `/api/scripts/run` SSE endpoint
+5. SSE route invokes handler with `log` callback, streams `LogEntry` events to client
+6. `LogPanel` renders entries in real-time; result displayed inline + toast on completion
+7. For "Run All": direct server action call via `runAllScripts()` (no streaming)
 
 ### Adding New Automation Scripts
 
@@ -63,8 +74,11 @@ Three files must be updated (the `ScriptId` type auto-derives from `SCRIPT_IDS`)
 
 2. **Create handler** in `app/actions/oktaActions.ts`:
    ```typescript
-   export async function yourHandler(config: OktaConfig): Promise<OktaActionResult> {
+   export async function yourHandler(config: OktaConfig, log: LogFn = () => {}): Promise<OktaActionResult> {
+     log({ level: 'info', message: 'Starting...' });
      // Use helpers from app/actions/helpers/ for API calls
+     log({ level: 'success', message: 'Done' });
+     return { success: true, message: '...' };
    }
    ```
 
@@ -80,6 +94,8 @@ Three files must be updated (the `ScriptId` type auto-derives from `SCRIPT_IDS`)
 - `OktaActionResult<T>` — Standard return type `{ success, message, data? }`
 - `AutomationScript` — Script metadata for UI display (supports `requiresInput` with `inputFields` for dynamic forms)
 - `ScriptId` — Union type derived from `SCRIPT_IDS` const tuple in `automationScripts.ts`
+- `LogEntry` — Streaming log event: `{ level, message, timestamp, step?, done?, result? }`
+- `LogFn` — Callback type `(entry: Omit<LogEntry, 'timestamp'>) => void` passed to handlers for streaming
 
 ### Script Categories
 
@@ -95,6 +111,7 @@ Three files must be updated (the `ScriptId` type auto-derives from `SCRIPT_IDS`)
 - `app/api/test-connection/route.ts` — Validates Okta credentials via `/api/v1/users/me`
 - `app/api/okta/apps/route.ts` — Lists apps for dynamic select fields
 - `app/api/okta/auth-servers/route.ts` — Lists authorization servers for dynamic select fields
+- `app/api/scripts/run/route.ts` — SSE endpoint for streaming script execution (POST)
 
 ### Authentication Modes
 

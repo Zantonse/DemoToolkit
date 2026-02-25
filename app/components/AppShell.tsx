@@ -18,7 +18,10 @@ export function AppShell() {
 
   const streamState = useScriptStream();
 
-  // Open the log panel automatically when streaming starts
+  // Open the log panel automatically when streaming starts.
+  // This is an intentional derived state update — the panel visibility
+  // is driven by the streaming state transition from false→true.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
     if (streamState.isStreaming) {
       setLogPanelOpen(true);

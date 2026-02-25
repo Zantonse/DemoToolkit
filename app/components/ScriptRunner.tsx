@@ -23,7 +23,7 @@ import { getHandler } from '../../lib/scriptRegistry';
 import type { AutomationScript } from '../../lib/types/automation';
 import type { OktaActionResult, OktaConfig } from '../../lib/types/okta';
 import { runAllScripts } from '../actions/oktaActions';
-import { Badge, Button, Spinner, SearchInput, useToast } from './ui';
+import { Badge, Button, SearchInput, useToast } from './ui';
 import type { CategoryType } from './Sidebar';
 
 type ScriptResult = OktaActionResult;
