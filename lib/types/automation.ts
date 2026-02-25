@@ -16,7 +16,7 @@ export interface AutomationScript {
   /** Brief description of what the script does */
   description: string;
   /** Category for grouping in the UI */
-  category?: 'Setup & Users' | 'Security & Policies' | 'Applications' | 'Governance';
+  category?: 'Setup & Users' | 'Security & Policies' | 'Applications' | 'Governance' | 'Tools';
   /** Whether this script requires user input fields */
   requiresInput?: boolean;
   /** Input fields configuration */

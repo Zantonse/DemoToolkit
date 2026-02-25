@@ -2,65 +2,16 @@
 'use server';
 
 import type { OktaConfig, OktaActionResult } from '../../lib/types/okta';
-
-type OktaAuthenticator = {
-  id: string;
-  key: string;
-  name: string;
-  status: 'ACTIVE' | 'INACTIVE' | string;
-};
-
-type OktaGroup = {
-  id: string;
-  profile: {
-    name: string;
-    description?: string;
-    [key: string]: any;
-  };
-};
-
-type OktaRoleAssignment = {
-  id: string;
-  type: string; // e.g. SUPER_ADMIN, ORG_ADMIN, etc.
-  label: string;
-  status: string;
-};
-
-type OktaPolicy = {
-  id: string;
-  name: string;
-  type: string;
-  _embedded?: {
-    resourceType?: string; // "APP" for app sign-in policies
-    [key: string]: any;
-  };
-};
-
-type OktaApp = {
-  id: string;
-  name: string;
-  label: string;
-};
-
-function normalizeOrgUrl(orgUrl: string): string {
-  return orgUrl.replace(/\/+$/, '');
-}
-
-function oktaHeaders(config: OktaConfig): HeadersInit {
-  return {
-    Authorization: `SSWS ${config.apiToken}`,
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-  };
-}
-
-async function safeJson<T = any>(res: Response): Promise<T | null> {
-  try {
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
-}
+import {
+  normalizeOrgUrl,
+  oktaHeaders,
+  safeJson,
+  oktaFetch,
+  type OktaAuthenticator,
+  type OktaGroup,
+  type OktaRoleAssignment,
+} from './helpers';
+import { getOAuthAccessToken, oigFetch } from './helpers/oauth';
 
 /**
  * 1. Enable FIDO2/WebAuthn via Authenticators API
@@ -82,7 +33,7 @@ export async function enableFIDO2(
     });
 
     if (!listRes.ok) {
-      const body = await safeJson(listRes);
+      const body = await safeJson<any>(listRes);
       throw new Error(
         `Failed to list authenticators (${listRes.status}): ${
           body?.errorSummary || listRes.statusText
@@ -116,7 +67,7 @@ export async function enableFIDO2(
       );
 
       if (!activateRes.ok) {
-        const body = await safeJson(activateRes);
+        const body = await safeJson<any>(activateRes);
         throw new Error(
           `Failed to activate FIDO2 authenticator (${activateRes.status}): ${
             body?.errorSummary || activateRes.statusText
@@ -124,7 +75,7 @@ export async function enableFIDO2(
         );
       }
 
-      const data = await safeJson(activateRes);
+      const data = await safeJson<any>(activateRes);
       return {
         success: true,
         message: 'FIDO2 (WebAuthn) authenticator activated.',
@@ -145,7 +96,7 @@ export async function enableFIDO2(
     });
 
     if (!createRes.ok) {
-      const body = await safeJson(createRes);
+      const body = await safeJson<any>(createRes);
       throw new Error(
         `Failed to create FIDO2 authenticator (${createRes.status}): ${
           body?.errorSummary || createRes.statusText
@@ -193,7 +144,7 @@ export async function createSuperAdminsGroup(
     );
 
     if (!listRes.ok) {
-      const body = await safeJson(listRes);
+      const body = await safeJson<any>(listRes);
       throw new Error(
         `Failed to search groups (${listRes.status}): ${
           body?.errorSummary || listRes.statusText
@@ -223,7 +174,7 @@ export async function createSuperAdminsGroup(
       });
 
       if (!createRes.ok) {
-        const body = await safeJson(createRes);
+        const body = await safeJson<any>(createRes);
         throw new Error(
           `Failed to create Super Administrators group (${createRes.status}): ${
             body?.errorSummary || createRes.statusText
@@ -246,7 +197,7 @@ export async function createSuperAdminsGroup(
     );
 
     if (!rolesRes.ok) {
-      const body = await safeJson(rolesRes);
+      const body = await safeJson<any>(rolesRes);
       // If we just created the group, this is a failure
       // If group existed, we can still report partial success
       return {
@@ -273,7 +224,7 @@ export async function createSuperAdminsGroup(
       );
 
       if (!assignRes.ok) {
-        const body = await safeJson(assignRes);
+        const body = await safeJson<any>(assignRes);
         return {
           success: false,
           message: `Group ${wasCreated ? 'created' : 'exists'} but failed to assign SUPER_ADMIN role (${assignRes.status}): ${
@@ -336,7 +287,7 @@ export async function assignSuperAdminRole(
     );
 
     if (!listRes.ok) {
-      const body = await safeJson(listRes);
+      const body = await safeJson<any>(listRes);
       throw new Error(
         `Failed to list group role assignments (${listRes.status}): ${
           body?.errorSummary || listRes.statusText
@@ -368,7 +319,7 @@ export async function assignSuperAdminRole(
     );
 
     if (!assignRes.ok) {
-      const body = await safeJson(assignRes);
+      const body = await safeJson<any>(assignRes);
       throw new Error(
         `Failed to assign SUPER_ADMIN role (${assignRes.status}): ${
           body?.errorSummary || assignRes.statusText
@@ -389,209 +340,6 @@ export async function assignSuperAdminRole(
       message: `Error assigning SUPER_ADMIN role: ${
         err.message ?? String(err)
       }`,
-    };
-  }
-}
-
-/**
- * 4. Update the Okta Admin Console app’s authentication policy
- *
- * For demo purposes:
- * - Locate the “Okta Admin Console” first-party app
- * - Locate an ACCESS_POLICY of resourceType APP (ideally named for Admin Console)
- * - Assign that policy to the Admin Console app via Application Policies API
- */
-async function oktaFetch<T = any>(
-  config: OktaConfig,
-  path: string,
-  init: RequestInit = {}
-): Promise<T> {
-  const baseUrl = config.orgUrl.replace(/\/+$/, '');
-  const url = `${baseUrl}${path}`;
-
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `SSWS ${config.apiToken}`,
-      ...(init.headers || {}),
-    },
-    cache: 'no-store',
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(
-      `Okta API error ${res.status} ${res.statusText} for ${path}: ${text || 'no body'}`
-    );
-  }
-
-  return (await res.json()) as T;
-}
-
-export async function updateAdminConsolePolicy(
-  config: OktaConfig
-): Promise<OktaActionResult> {
-  'use server';
-
-  try {
-    if (!config.orgUrl || !config.apiToken) {
-      return {
-        success: false,
-        message: 'Missing Okta org URL or API token for updating Admin Console policy.',
-      };
-    }
-
-    // 1) Get all ACCESS_POLICY (app sign-in) policies
-    const policies: any[] = await oktaFetch(config, '/api/v1/policies?type=ACCESS_POLICY');
-
-    // Try to find the policy that corresponds to the Okta Admin Console app
-    const adminPolicy =
-      policies.find((p) => p.name === 'Okta Admin Console') ||
-      policies.find(
-        (p) =>
-          typeof p.name === 'string' &&
-          p.name.toLowerCase().includes('admin') &&
-          p.name.toLowerCase().includes('console')
-      ) ||
-      policies[0]; // fallback so the script still does *something* in a lab org
-
-    if (!adminPolicy) {
-      return {
-        success: false,
-        message:
-          'No ACCESS_POLICY (app sign-in) policies found. Create an Admin Console app sign-in policy first.',
-      };
-    }
-
-    // 2) Fetch existing rules for this policy
-    const rules: any[] = await oktaFetch(
-      config,
-      `/api/v1/policies/${adminPolicy.id}/rules`
-    );
-
-    // Look for a rule named "Admin App Policy"
-    let rule = rules.find((r) => r.name === 'Admin App Policy');
-
-    /**
-     * We want:
-     *  - Any user / Any group / Any device / Any IP / Any risk
-     *  - Access is: Allowed after successful authentication
-     *  - User must authenticate with: Any 2 factor types
-     *  - Possession factor constraints: phishing-resistant, hardware-protected,
-     *    user interaction, device passcode/biometric, biometric verification, etc.
-     *
-     * These map to appSignOn.verificationMethod with:
-     *    factorMode: "2FA"
-     *    type: "ASSURANCE"
-     *    constraints: [{ possession: { ... } }]
-     *
-     * NOTE: exact flag names (deviceBound, phishingResistant, hardwareProtection,
-     * userVerification, userPresence) are based on the Policy API model and
-     * examples in Okta’s docs/blogs. You can capture a "golden" JSON rule by
-     * configuring it in the Admin UI, calling GET /policies/{id}/rules, and
-     * pasting that body here if you want a 1:1 match.
-     */
-
-    const verificationMethod = {
-      factorMode: '2FA', // "Any 2 factor types" (ASSURANCE model) 
-      type: 'ASSURANCE',
-      // Re-auth every time → PT0S is commonly used to represent "every sign-in"
-      reauthenticateIn: 'PT0S',
-      constraints: [
-        {
-          possession: {
-            // All of these are "REQUIRED" constraints for possession factors
-            deviceBound: 'REQUIRED', // hardware bound / laptop+phone combo
-            phishingResistant: 'REQUIRED',
-            hardwareProtection: 'REQUIRED',
-            userPresence: 'REQUIRED',
-            userVerification: 'REQUIRED',
-          },
-        },
-      ],
-    };
-
-    const rulePayloadBase = {
-      type: 'ACCESS_POLICY',
-      status: 'ACTIVE',
-      name: 'Admin App Policy',
-      // You can tweak priority if you have other rules
-      priority: 1,
-      system: false,
-      /**
-       * Conditions:
-       *   - Any user type
-       *   - Any group
-       *   - Any user
-       *   - Any device state
-       *   - No device assurance policy
-       *   - Any platform
-       *   - Any IP / Any network zone
-       *   - Any risk
-       * This is effectively the "Any ..." you see in the UI.
-       *
-       * If you want to add device assurance or a specific group later,
-       * you’d populate conditions.people, conditions.risk, conditions.device, etc.
-       */
-      conditions: null,
-      actions: {
-        appSignOn: {
-          access: 'ALLOW', // "Allowed after successful authentication"
-          verificationMethod,
-        },
-      },
-    };
-
-    let updatedRule: any;
-
-    if (!rule) {
-      // 3a) No rule named "Admin App Policy" → create it
-      updatedRule = await oktaFetch(
-        config,
-        `/api/v1/policies/${adminPolicy.id}/rules`,
-        {
-          method: 'POST',
-          body: JSON.stringify(rulePayloadBase),
-        }
-      );
-
-      return {
-        success: true,
-        message: `Created "Admin App Policy" rule on app sign-in policy "${adminPolicy.name}".`,
-        data: updatedRule,
-      };
-    } else {
-      // 3b) Update existing rule, preserving non-auth fields that Okta cares about
-      const mergedRule = {
-        ...rule,
-        ...rulePayloadBase,
-        id: rule.id,
-      };
-
-      updatedRule = await oktaFetch(
-        config,
-        `/api/v1/policies/${adminPolicy.id}/rules/${rule.id}`,
-        {
-          method: 'PUT',
-          body: JSON.stringify(mergedRule),
-        }
-      );
-
-      return {
-        success: true,
-        message: `Updated "Admin App Policy" rule on app sign-in policy "${adminPolicy.name}".`,
-        data: updatedRule,
-      };
-    }
-  } catch (error: any) {
-    console.error('Error updating Admin Console policy:', error);
-
-    return {
-      success: false,
-      message: `Error updating Admin Console policy: ${error.message || String(
-        error
-      )}`,
     };
   }
 }
@@ -811,12 +559,14 @@ export async function populateDemoUsers(
       errors,
     };
 
-    const success =
-      errors.length === 0 || created.length > 0 || skipped.length > 0;
+    const success = errors.length === 0;
+    const partialSuccess = errors.length > 0 && (created.length > 0 || skipped.length > 0);
 
     return {
       success,
-      message: `Demo user population complete. Created: ${created.length}, Skipped: ${skipped.length}, Errors: ${errors.length}.`,
+      message: partialSuccess
+        ? `Demo user population partially complete. Created: ${created.length}, Skipped: ${skipped.length}, Errors: ${errors.length}.`
+        : `Demo user population complete. Created: ${created.length}, Skipped: ${skipped.length}, Errors: ${errors.length}.`,
       data: summary,
     };
   } catch (err: any) {
@@ -879,7 +629,7 @@ export async function addSalesforceSAMLApp(
     });
 
     if (!createRes.ok) {
-      const body = await safeJson(createRes);
+      const body = await safeJson<any>(createRes);
       
       // Check if app already exists
       if (body?.errorCode === 'E0000007' || body?.errorSummary?.includes('already exists')) {
@@ -960,7 +710,7 @@ export async function addBoxApp(
     });
 
     if (!createRes.ok) {
-      const body = await safeJson(createRes);
+      const body = await safeJson<any>(createRes);
       
       // Check if app already exists
       if (body?.errorCode === 'E0000007' || body?.errorSummary?.includes('already exists')) {
@@ -1015,7 +765,6 @@ export async function createAccessCertificationCampaign(
 
   try {
     // Step 1: Create or find the Fallback Reviewer user
-    console.log('Creating or finding Fallback Reviewer user...');
     
     const fallbackEmail = 'fallback.reviewer@atko.email';
     let fallbackUserId: string;
@@ -1031,7 +780,7 @@ export async function createAccessCertificationCampaign(
     );
 
     if (!searchRes.ok) {
-      const body = await safeJson(searchRes);
+      const body = await safeJson<any>(searchRes);
       throw new Error(
         `Failed to search for fallback reviewer (${searchRes.status}): ${
           body?.errorSummary || searchRes.statusText
@@ -1043,7 +792,6 @@ export async function createAccessCertificationCampaign(
 
     if (existingUsers && existingUsers.length > 0) {
       fallbackUserId = existingUsers[0].id;
-      console.log('Fallback Reviewer already exists:', fallbackUserId);
     } else {
       // Create the fallback reviewer user
       const createUserRes = await fetch(
@@ -1064,7 +812,7 @@ export async function createAccessCertificationCampaign(
       );
 
       if (!createUserRes.ok) {
-        const body = await safeJson(createUserRes);
+        const body = await safeJson<any>(createUserRes);
         throw new Error(
           `Failed to create fallback reviewer (${createUserRes.status}): ${
             body?.errorSummary || createUserRes.statusText
@@ -1074,11 +822,9 @@ export async function createAccessCertificationCampaign(
 
       const fallbackUser = await createUserRes.json();
       fallbackUserId = fallbackUser.id;
-      console.log('Fallback Reviewer created:', fallbackUserId);
     }
 
     // Step 2: Create the Access Certification Campaign
-    console.log('Creating Access Certification Campaign...');
     
     // Calculate start date (1 day from now)
     const startDate = new Date();
@@ -1119,7 +865,6 @@ export async function createAccessCertificationCampaign(
       },
     };
 
-    console.log('Campaign payload:', JSON.stringify(campaignPayload, null, 2));
 
     // First, check if the governance API is available
     const checkRes = await fetch(
@@ -1140,7 +885,6 @@ export async function createAccessCertificationCampaign(
 
     if (!checkRes.ok && checkRes.status === 405) {
       // Method not allowed on GET, but endpoint might exist. Try POST anyway.
-      console.log('GET method not supported, trying POST...');
     }
 
     const campaignRes = await fetch(
@@ -1153,11 +897,9 @@ export async function createAccessCertificationCampaign(
       }
     );
 
-    console.log('Campaign Response Status:', campaignRes.status);
 
     if (!campaignRes.ok) {
-      const body = await safeJson(campaignRes);
-      console.log('Campaign Error Response:', body);
+      const body = await safeJson<any>(campaignRes);
 
       // Check if endpoint doesn't exist or method not supported
       if (campaignRes.status === 404 || campaignRes.status === 405) {
@@ -1183,7 +925,6 @@ export async function createAccessCertificationCampaign(
     }
 
     const campaign = await campaignRes.json();
-    console.log('Campaign Created Successfully:', campaign.id);
 
     return {
       success: true,
@@ -1233,7 +974,7 @@ export async function createStandardDepartmentGroups(
         
         // Check if group exists
         const groupSearchRes = await fetch(
-          `${baseUrl}/api/v1/groups?q=${encodeURIComponent(dept)}`,
+          `${baseUrl}/api/v1/groups?search=${encodeURIComponent(`profile.name eq "${dept}"`)}`,
           { method: 'GET', headers, cache: 'no-store' }
         );
 
@@ -1308,7 +1049,7 @@ export async function createStandardDepartmentGroups(
             });
           }
         } else {
-          const body = await safeJson(createRuleRes);
+          const body = await safeJson<any>(createRuleRes);
           if (body?.errorCode === 'E0000007' || body?.errorSummary?.includes('already exists')) {
              results.push({ type: 'rule', name: ruleName, status: 'exists' });
           } else {
@@ -1322,8 +1063,7 @@ export async function createStandardDepartmentGroups(
     }
 
     const success = errors.length === 0;
-    const createdCount = results.filter(r => r.status === 'created').length;
-    
+
     return {
       success,
       message: `Department groups processing complete. Created/Found: ${results.length}, Errors: ${errors.length}.`,
@@ -1381,7 +1121,6 @@ export async function createDeviceAssurancePolicies(
 
     // First, try to list existing policies to check format
     const existingPolicies = await checkRes.json().catch(() => []);
-    console.log('Existing device assurance policies:', existingPolicies);
 
     for (const p of platforms) {
       try {
@@ -1418,7 +1157,6 @@ export async function createDeviceAssurancePolicies(
           payload.secureHardwarePresent = true; // Must be true if specified
         }
 
-        console.log(`Creating ${p.name} with payload:`, JSON.stringify(payload));
 
         const res = await fetch(`${baseUrl}/api/v1/device-assurances`, {
           method: 'POST',
@@ -1430,9 +1168,8 @@ export async function createDeviceAssurancePolicies(
         if (res.ok) {
           const policy = await res.json();
           results.push({ name: p.name, status: 'created', id: policy.id });
-          console.log(`✓ Created ${p.name}`);
         } else {
-          const body = await safeJson(res);
+          const body = await safeJson<any>(res);
           console.error(`✗ Failed to create ${p.name}:`, body);
           
           // Handle "already exists" gracefully
@@ -1490,7 +1227,6 @@ export async function configureEntityRiskPolicy(
 
   try {
     // Step 1: First, let's check what policy types are available
-    console.log('Checking available policy types...');
     const allPoliciesRes = await fetch(`${baseUrl}/api/v1/policies`, {
       method: 'GET',
       headers,
@@ -1499,8 +1235,6 @@ export async function configureEntityRiskPolicy(
 
     if (allPoliciesRes.ok) {
       const allPolicies = await allPoliciesRes.json();
-      console.log('Available policy types:', [...new Set(allPolicies.map((p: any) => p.type))]);
-      console.log('Total policies found:', allPolicies.length);
       
       // Look for Entity Risk or Risk Scoring policies
       const riskRelatedPolicies = allPolicies.filter((p: any) => 
@@ -1510,17 +1244,10 @@ export async function configureEntityRiskPolicy(
       );
       
       if (riskRelatedPolicies.length > 0) {
-        console.log('Risk-related policies found:', riskRelatedPolicies.map((p: any) => ({ 
-          id: p.id, 
-          name: p.name, 
-          type: p.type,
-          system: p.system 
-        })));
       }
     }
 
     // Step 2: Try to find the Entity Risk Policy with RISK type
-    console.log('Attempting to fetch RISK type policies...');
     let policiesRes = await fetch(`${baseUrl}/api/v1/policies?type=RISK`, {
       method: 'GET',
       headers,
@@ -1530,13 +1257,12 @@ export async function configureEntityRiskPolicy(
     let policies: any[] = [];
 
     if (!policiesRes.ok) {
-      const body = await safeJson(policiesRes);
+      const body = await safeJson<any>(policiesRes);
       console.error('Failed to fetch RISK policies:', body);
       
       // Check if RISK policy type is not available
       if (policiesRes.status === 400 || body?.errorSummary?.includes('Invalid policy type')) {
         // Try alternative policy types that might be used for Entity Risk
-        console.log('Trying alternative: ENTITY_RISK...');
         const altRes = await fetch(`${baseUrl}/api/v1/policies?type=ENTITY_RISK`, {
           method: 'GET',
           headers,
@@ -1546,9 +1272,7 @@ export async function configureEntityRiskPolicy(
         if (altRes.ok) {
           const altPolicies = await altRes.json();
           if (altPolicies.length > 0) {
-            console.log('Found ENTITY_RISK policies:', altPolicies.length);
             policies = altPolicies;
-            console.log('ENTITY_RISK policies:', policies.map((p: any) => ({ id: p.id, name: p.name, type: p.type })));
           }
         }
         
@@ -1563,10 +1287,8 @@ export async function configureEntityRiskPolicy(
       }
     } else {
       policies = await policiesRes.json();
-      console.log('RISK type policies found:', policies.length);
       
       if (policies.length > 0) {
-        console.log('RISK policies:', policies.map((p: any) => ({ id: p.id, name: p.name, type: p.type })));
       }
     }
     
@@ -1578,7 +1300,6 @@ export async function configureEntityRiskPolicy(
     if (!riskPolicy && policies.length > 0) {
       // If no specific policy found, use the first RISK policy if available
       riskPolicy = policies[0];
-      console.log('Using first available RISK policy:', riskPolicy.name);
     }
 
     if (!riskPolicy) {
@@ -1589,7 +1310,6 @@ export async function configureEntityRiskPolicy(
     }
 
     const policyId = riskPolicy.id;
-    console.log('Found Entity Risk Policy:', policyId, riskPolicy.name);
 
     // Step 2: Fetch existing rules to check configuration
     const rulesRes = await fetch(`${baseUrl}/api/v1/policies/${policyId}/rules`, {
@@ -1599,7 +1319,7 @@ export async function configureEntityRiskPolicy(
     });
     
     if (!rulesRes.ok) {
-      const body = await safeJson(rulesRes);
+      const body = await safeJson<any>(rulesRes);
       return {
         success: false,
         message: `Unable to fetch Entity Risk Policy rules. Error: ${body?.errorSummary || rulesRes.statusText}`,
@@ -1607,21 +1327,16 @@ export async function configureEntityRiskPolicy(
     }
     
     const existingRules = await rulesRes.json();
-    console.log('Existing Entity Risk Policy rules:', existingRules.length);
     
     // Entity Risk Policy uses immutable system rules
     // We can only view them, not create/modify them according to Okta API docs
     // The documentation states: "Creating or replacing a policy with the ENTITY_RISK type is not supported"
     
     if (existingRules.length > 0) {
-      console.log('Entity Risk Policy Rules:');
       existingRules.forEach((rule: any) => {
-        console.log(`- ${rule.name} (ID: ${rule.id}, Status: ${rule.status}, Priority: ${rule.priority})`);
         if (rule.conditions) {
-          console.log(`  Conditions: ${JSON.stringify(rule.conditions, null, 2)}`);
         }
         if (rule.actions) {
-          console.log(`  Actions: ${JSON.stringify(rule.actions, null, 2)}`);
         }
       });
     }
@@ -1744,7 +1459,7 @@ export async function addNewAdministrator(
 
     // 3. Add user to Super Administrators group
     try {
-      const baseUrl = config.orgUrl.replace(/\/+$/, '');
+      const baseUrl = normalizeOrgUrl(config.orgUrl);
       const addToGroupRes = await fetch(
         `${baseUrl}/api/v1/groups/${superAdminGroup.id}/users/${user.id}`,
         {
@@ -1758,7 +1473,7 @@ export async function addNewAdministrator(
       );
 
       if (!addToGroupRes.ok) {
-        const body = await safeJson(addToGroupRes);
+        const body = await safeJson<any>(addToGroupRes);
         throw new Error(
           `Failed to add user to group (${addToGroupRes.status}): ${
             body?.errorSummary || addToGroupRes.statusText
@@ -1767,7 +1482,6 @@ export async function addNewAdministrator(
       }
 
       // 204 No Content is success - don't try to parse JSON
-      console.log(`Successfully added user ${user.id} to group ${superAdminGroup.id}`);
     } catch (err: any) {
       return {
         success: false,
@@ -1803,7 +1517,7 @@ export async function setupRealms(
   try {
     // 1. List existing realms
     // Note: Realms API might be feature-flagged or require OIE.
-    const realms = await oktaFetch(config, '/api/v1/realms');
+    const realms = await oktaFetch<any[]>(config, '/api/v1/realms');
     
     const results: any[] = [];
     const errors: string[] = [];
@@ -1919,8 +1633,6 @@ export async function runPolicySimulation(
       };
     }
 
-    console.log('Running policy simulation for app:', appInstance);
-    console.log('Policy types:', policyTypes);
 
     // Build simulation request payload
     const simulationPayload: any = {
@@ -1932,7 +1644,6 @@ export async function runPolicySimulation(
       simulationPayload.policyTypes = policyTypes;
     }
 
-    console.log('Simulation payload:', JSON.stringify(simulationPayload, null, 2));
 
     // Call the policy simulation API
     const simulationRes = await fetch(`${baseUrl}/api/v1/policies/simulate?expand=EVALUATED,RULE`, {
@@ -1943,7 +1654,7 @@ export async function runPolicySimulation(
     });
 
     if (!simulationRes.ok) {
-      const body = await safeJson(simulationRes);
+      const body = await safeJson<any>(simulationRes);
       
       // Check for feature not available errors
       if (simulationRes.status === 404 || simulationRes.status === 405) {
@@ -1960,7 +1671,6 @@ export async function runPolicySimulation(
     }
 
     const simulation = await simulationRes.json();
-    console.log('Simulation results:', JSON.stringify(simulation, null, 2));
 
     // Parse the results
     const evaluations = simulation.evaluation || [];
@@ -2097,186 +1807,6 @@ export async function runAllScripts(
 }
 
 // ============================================================================
-// OAuth 2.0 Utilities for OIG APIs
-// ============================================================================
-
-import { SignJWT, importPKCS8, importJWK } from 'jose';
-
-interface OAuthTokenResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-  scope: string;
-}
-
-/**
- * Generate a client assertion JWT for private_key_jwt authentication
- * Supports both PEM format and JWK (JSON) format private keys
- */
-async function generateClientAssertion(
-  clientId: string,
-  orgUrl: string,
-  privateKeyInput: string,
-  keyId: string
-): Promise<string> {
-  let privateKey;
-  
-  // Normalize the input - remove extra whitespace and carriage returns
-  let keyData = privateKeyInput.trim().replace(/\r/g, '');
-  
-  // Strip PEM headers if present (Okta sometimes wraps JWK in PEM headers incorrectly)
-  if (keyData.includes('-----BEGIN')) {
-    keyData = keyData
-      .replace(/-----BEGIN [A-Z ]+-----/g, '')
-      .replace(/-----END [A-Z ]+-----/g, '')
-      .trim();
-  }
-  
-  // Check if it's JSON (JWK format) by looking for opening brace
-  const isJwk = keyData.startsWith('{') || keyData.includes('"kty"');
-  
-  if (isJwk) {
-    // Parse as JWK (JSON Web Key)
-    try {
-      const jwk = JSON.parse(keyData);
-      if (!jwk.kty) {
-        throw new Error('JWK missing required "kty" field');
-      }
-      privateKey = await importJWK(jwk, 'RS256');
-      console.log('Parsed private key as JWK format');
-    } catch (err: any) {
-      throw new Error(`Failed to parse private key as JWK: ${err.message}. Make sure the JSON is valid.`);
-    }
-  } else {
-    // Parse as PEM format
-    try {
-      // Reconstruct PEM with proper formatting
-      let pemKey = privateKeyInput.trim();
-      
-      if (!pemKey.includes('-----BEGIN')) {
-        // Raw base64, wrap in PEM headers
-        const chunked = keyData.match(/.{1,64}/g)?.join('\n') || keyData;
-        pemKey = `-----BEGIN PRIVATE KEY-----\n${chunked}\n-----END PRIVATE KEY-----`;
-      } else {
-        // Has headers but might need newline fixing
-        pemKey = pemKey.replace(/\r/g, '');
-        if (!pemKey.includes('\n')) {
-          pemKey = pemKey
-            .replace(/-----BEGIN PRIVATE KEY-----/, '-----BEGIN PRIVATE KEY-----\n')
-            .replace(/-----END PRIVATE KEY-----/, '\n-----END PRIVATE KEY-----');
-        }
-      }
-      
-      privateKey = await importPKCS8(pemKey, 'RS256');
-      console.log('Parsed private key as PEM format');
-    } catch (err: any) {
-      throw new Error(`Failed to parse private key as PEM: ${err.message}. For JWK format, paste the JSON directly.`);
-    }
-  }
-  
-  const now = Math.floor(Date.now() / 1000);
-  const jti = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-  
-  const jwt = await new SignJWT({})
-    .setProtectedHeader({ alg: 'RS256', kid: keyId })
-    .setIssuedAt(now)
-    .setExpirationTime(now + 300) // 5 minutes
-    .setIssuer(clientId)
-    .setSubject(clientId)
-    .setAudience(`${normalizeOrgUrl(orgUrl)}/oauth2/v1/token`)
-    .setJti(jti)
-    .sign(privateKey);
-  
-  return jwt;
-}
-
-/**
- * Get OAuth 2.0 access token using client credentials flow with private_key_jwt
- * Required for OIG APIs (Entitlements, Risk Rules, etc.)
- */
-async function getOAuthAccessToken(
-  orgUrl: string,
-  clientId: string,
-  privateKey: string,
-  keyId: string,
-  scopes: string[]
-): Promise<string> {
-  const baseUrl = normalizeOrgUrl(orgUrl);
-  const tokenUrl = `${baseUrl}/oauth2/v1/token`;
-
-  // Generate client assertion JWT
-  const clientAssertion = await generateClientAssertion(clientId, orgUrl, privateKey, keyId);
-
-  const response = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Accept': 'application/json',
-    },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      scope: scopes.join(' '),
-      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-      client_assertion: clientAssertion,
-    }),
-    cache: 'no-store',
-  });
-
-  if (!response.ok) {
-    const error = await safeJson(response);
-    throw new Error(
-      `OAuth token exchange failed (${response.status}): ${
-        error?.error_description || error?.error || response.statusText
-      }`
-    );
-  }
-
-  const tokenData = (await response.json()) as OAuthTokenResponse;
-  return tokenData.access_token;
-}
-
-/**
- * Make authenticated request to OIG API using OAuth Bearer token
- */
-async function oigFetch<T = any>(
-  baseUrl: string,
-  accessToken: string,
-  path: string,
-  init?: RequestInit
-): Promise<T> {
-  const url = `${normalizeOrgUrl(baseUrl)}${path}`;
-
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-    cache: 'no-store',
-  });
-
-  if (!response.ok) {
-    const error = await safeJson(response);
-    const method = init?.method || 'GET';
-    let helpText = '';
-    
-    if (response.status === 403) {
-      helpText = ' Check that your API Services app has: 1) Okta API Scopes granted (okta.governance.entitlements.manage, okta.governance.riskRule.manage, okta.apps.read), and 2) An admin role assigned (Super Administrator or custom role with OIG permissions).';
-    }
-    
-    throw new Error(
-      `OIG API error on ${method} ${path} (${response.status}): ${
-        error?.errorSummary || error?.message || response.statusText
-      }${helpText}`
-    );
-  }
-
-  return response.json();
-}
-
-// ============================================================================
 // Setup SoD Demo - Creates entitlements, risk rule, and bundles
 // ============================================================================
 
@@ -2349,7 +1879,6 @@ export async function setupSodDemo(
 
   try {
     // Step 1: Get OAuth access token using private_key_jwt
-    console.log('Getting OAuth access token...');
     const accessToken = await getOAuthAccessToken(
       config.orgUrl,
       config.clientId,
@@ -2364,7 +1893,6 @@ export async function setupSodDemo(
     );
 
     // Step 2: Get org ID for constructing resource ORN
-    console.log('Getting org info...');
     const orgInfo = await oigFetch<{ id: string }>(
       baseUrl,
       accessToken,
@@ -2373,7 +1901,6 @@ export async function setupSodDemo(
     const orgId = orgInfo.id;
 
     // Step 3: Create entitlement with values
-    console.log('Creating entitlement with values...');
     const entitlementPayload = {
       name: entitlementName,
       externalValue: entitlementExternalValue,
@@ -2408,7 +1935,6 @@ export async function setupSodDemo(
       }
     );
 
-    console.log(`Created entitlement: ${entitlement.id}`);
 
     // Get the value IDs from the created entitlement
     const value1 = entitlement.values?.find(v => v.externalValue === role1ExternalValue);
@@ -2422,10 +1948,10 @@ export async function setupSodDemo(
       };
     }
 
-    // Step 4: Create SoD Risk Rule
-    console.log('Creating SoD risk rule...');
+    // Step 4: Create SoD Risk Rule (optional - may fail due to API validation)
     const resourceOrn = `orn:okta:idp:${orgId}:apps:netsuite:${appId}`;
 
+    let riskRule: RiskRule | null = null;
     const riskRulePayload = {
       name: `SoD - ${role1Name} vs ${role2Name}`,
       description: `Prevents a user from holding both ${role1Name.toLowerCase()} and ${role2Name.toLowerCase()} roles`,
@@ -2467,34 +1993,115 @@ export async function setupSodDemo(
       },
     };
 
-    const riskRule = await oigFetch<RiskRule>(
-      baseUrl,
-      accessToken,
-      '/governance/api/v1/risk-rules',
-      {
-        method: 'POST',
-        body: JSON.stringify(riskRulePayload),
-      }
-    );
+    try {
+      riskRule = await oigFetch<RiskRule>(
+        baseUrl,
+        accessToken,
+        '/governance/api/v1/risk-rules',
+        {
+          method: 'POST',
+          body: JSON.stringify(riskRulePayload),
+        }
+      );
+    } catch (riskErr: any) {
+      console.warn(`Could not create risk rule: ${riskErr.message}`);
+      console.warn('You can create the SoD risk rule manually in Admin Console > Identity Governance > Access Certifications > Risk Rules');
+    }
 
-    console.log(`Created risk rule: ${riskRule.id}`);
+    // Step 5: Create Entitlement Bundles for Access Requests
+    const bundles: EntitlementBundle[] = [];
+
+    // Bundle for Role 1
+    const bundle1Payload = {
+      name: role1Name,
+      description: `Access bundle for ${role1Name} entitlement`,
+      status: 'ACTIVE',
+      entitlements: [
+        {
+          entitlementId: entitlement.id,
+          valueIds: [value1.id],
+        },
+      ],
+    };
+
+    try {
+      const bundle1 = await oigFetch<EntitlementBundle>(
+        baseUrl,
+        accessToken,
+        '/governance/api/v1/entitlement-bundles',
+        {
+          method: 'POST',
+          body: JSON.stringify(bundle1Payload),
+        }
+      );
+      bundles.push(bundle1);
+    } catch (bundleErr: any) {
+      console.warn(`Could not create bundle for ${role1Name}: ${bundleErr.message}`);
+    }
+
+    // Bundle for Role 2
+    const bundle2Payload = {
+      name: role2Name,
+      description: `Access bundle for ${role2Name} entitlement`,
+      status: 'ACTIVE',
+      entitlements: [
+        {
+          entitlementId: entitlement.id,
+          valueIds: [value2.id],
+        },
+      ],
+    };
+
+    try {
+      const bundle2 = await oigFetch<EntitlementBundle>(
+        baseUrl,
+        accessToken,
+        '/governance/api/v1/entitlement-bundles',
+        {
+          method: 'POST',
+          body: JSON.stringify(bundle2Payload),
+        }
+      );
+      bundles.push(bundle2);
+    } catch (bundleErr: any) {
+      console.warn(`Could not create bundle for ${role2Name}: ${bundleErr.message}`);
+    }
 
     // Build success message
     const successParts = [
       `✓ Created entitlement "${entitlementName}" (${entitlement.id}) with values:`,
       `  - ${role1Name} (${value1.id})`,
       `  - ${role2Name} (${value2.id})`,
-      `✓ Created SoD risk rule "${riskRule.name}" (${riskRule.id})`,
-      '',
-      'Next: Run "Create Entitlement Bundles" to enable Access Requests for these roles.',
     ];
+
+    if (riskRule) {
+      successParts.push('');
+      successParts.push(`✓ Created SoD risk rule "${riskRule.name}" (${riskRule.id})`);
+    } else {
+      successParts.push('');
+      successParts.push(`⚠ Could not create risk rule via API. Create it manually:`);
+      successParts.push(`  Admin Console > Identity Governance > Risk Rules > Add Rule`);
+      successParts.push(`  Select the two entitlement values above as conflicting`);
+    }
+
+    if (bundles.length > 0) {
+      successParts.push('');
+      successParts.push(`✓ Created ${bundles.length} entitlement bundle(s) for Access Requests:`);
+      for (const b of bundles) {
+        successParts.push(`  - ${b.name} (${b.id})`);
+      }
+    }
+
+    successParts.push('');
+    successParts.push('Demo ready! Users with one role will be flagged/blocked when requesting the other.');
 
     return {
       success: true,
       message: successParts.join('\n'),
       data: {
         entitlement,
-        riskRule,
+        riskRule: riskRule || undefined,
+        bundles: bundles.length > 0 ? bundles : undefined,
       },
     };
   } catch (err: any) {
@@ -2519,7 +2126,14 @@ export async function createEntitlementBundles(
     bundle2Name?: string;
     bundle2ValueId?: string;
   }
-): Promise<ScriptResult> {
+): Promise<OktaActionResult> {
+  if (!config.clientId || !config.privateKey || !config.keyId) {
+    return {
+      success: false,
+      message: 'OAuth credentials (Client ID, Private Key, and Key ID) are required for creating entitlement bundles. Configure them in Settings.',
+    };
+  }
+
   const baseUrl = normalizeOrgUrl(config.orgUrl);
   const {
     entitlementId,
@@ -2531,7 +2145,6 @@ export async function createEntitlementBundles(
 
   try {
     // Step 1: Get OAuth access token
-    console.log('Getting OAuth access token...');
     const accessToken = await getOAuthAccessToken(
       config.orgUrl,
       config.clientId,
@@ -2546,15 +2159,14 @@ export async function createEntitlementBundles(
     const bundles: EntitlementBundle[] = [];
 
     // Create first bundle
-    console.log(`Creating bundle: ${bundle1Name}...`);
     const bundle1Payload = {
       name: bundle1Name,
       description: `Access bundle for ${bundle1Name}`,
       status: 'ACTIVE',
       entitlements: [
         {
-          id: entitlementId,
-          values: [{ id: bundle1ValueId }],
+          entitlementId: entitlementId,
+          valueIds: [bundle1ValueId],
         },
       ],
     };
@@ -2569,19 +2181,17 @@ export async function createEntitlementBundles(
       }
     );
     bundles.push(bundle1);
-    console.log(`Created bundle: ${bundle1.id}`);
 
     // Create second bundle if provided
     if (bundle2Name && bundle2ValueId) {
-      console.log(`Creating bundle: ${bundle2Name}...`);
       const bundle2Payload = {
         name: bundle2Name,
         description: `Access bundle for ${bundle2Name}`,
         status: 'ACTIVE',
         entitlements: [
           {
-            id: entitlementId,
-            values: [{ id: bundle2ValueId }],
+            entitlementId: entitlementId,
+            valueIds: [bundle2ValueId],
           },
         ],
       };
@@ -2596,7 +2206,6 @@ export async function createEntitlementBundles(
         }
       );
       bundles.push(bundle2);
-      console.log(`Created bundle: ${bundle2.id}`);
     }
 
     const successParts = [

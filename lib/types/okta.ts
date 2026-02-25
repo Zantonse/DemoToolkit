@@ -16,8 +16,6 @@ export interface OktaConfig {
   authMode?: 'ssws' | 'oauth';
   /** OAuth 2.0 Client ID (for OIG APIs that require OAuth scopes) */
   clientId?: string;
-  /** OAuth 2.0 Client Secret (for client_secret_basic auth - not supported by Org AS) */
-  clientSecret?: string;
   /** PEM-encoded private key for private_key_jwt authentication (required for OIG APIs) */
   privateKey?: string;
   /** Key ID (kid) for the private key */

@@ -34,8 +34,6 @@ const API_TOKEN_KEY = 'oktaApiToken';
 const AUTH_MODE_KEY = 'oktaAuthMode';
 /** localStorage key for OAuth Client ID */
 const CLIENT_ID_KEY = 'oktaClientId';
-/** localStorage key for OAuth Client Secret */
-const CLIENT_SECRET_KEY = 'oktaClientSecret';
 /** localStorage key for Private Key */
 const PRIVATE_KEY_KEY = 'oktaPrivateKey';
 /** localStorage key for Key ID */
@@ -45,6 +43,12 @@ const KEY_ID_KEY = 'oktaKeyId';
  * Extended context value with setters and utilities
  */
 interface OktaContextValue extends OktaConfig {
+  /** OAuth Client ID (always a string in the context, defaults to '') */
+  clientId: string;
+  /** PEM-encoded private key (always a string in the context, defaults to '') */
+  privateKey: string;
+  /** Key ID (always a string in the context, defaults to '') */
+  keyId: string;
   /** Update the Okta Org URL */
   setOrgUrl: (value: string) => void;
   /** Update the API Token */
@@ -53,8 +57,6 @@ interface OktaContextValue extends OktaConfig {
   setAuthMode: (value: 'ssws' | 'oauth') => void;
   /** Update the OAuth Client ID */
   setClientId: (value: string) => void;
-  /** Update the OAuth Client Secret */
-  setClientSecret: (value: string) => void;
   /** Update the Private Key */
   setPrivateKey: (value: string) => void;
   /** Update the Key ID */
@@ -78,7 +80,6 @@ export function OktaProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState<string>('');
   const [authMode, setAuthMode] = useState<'ssws' | 'oauth'>('ssws');
   const [clientId, setClientId] = useState<string>('');
-  const [clientSecret, setClientSecret] = useState<string>('');
   const [privateKey, setPrivateKey] = useState<string>('');
   const [keyId, setKeyId] = useState<string>('');
   const [isInitialized, setIsInitialized] = useState(false);
@@ -92,7 +93,6 @@ export function OktaProvider({ children }: { children: ReactNode }) {
       const storedApiToken = window.localStorage.getItem(API_TOKEN_KEY) ?? '';
       const storedAuthMode = (window.localStorage.getItem(AUTH_MODE_KEY) as 'ssws' | 'oauth') ?? 'ssws';
       const storedClientId = window.localStorage.getItem(CLIENT_ID_KEY) ?? '';
-      const storedClientSecret = window.localStorage.getItem(CLIENT_SECRET_KEY) ?? '';
       const storedPrivateKey = window.localStorage.getItem(PRIVATE_KEY_KEY) ?? '';
       const storedKeyId = window.localStorage.getItem(KEY_ID_KEY) ?? '';
 
@@ -100,7 +100,6 @@ export function OktaProvider({ children }: { children: ReactNode }) {
       setApiToken(storedApiToken);
       setAuthMode(storedAuthMode || 'ssws');
       setClientId(storedClientId);
-      setClientSecret(storedClientSecret);
       setPrivateKey(storedPrivateKey);
       setKeyId(storedKeyId);
     } catch (error) {
@@ -119,20 +118,18 @@ export function OktaProvider({ children }: { children: ReactNode }) {
       window.localStorage.setItem(API_TOKEN_KEY, apiToken);
       window.localStorage.setItem(AUTH_MODE_KEY, authMode);
       window.localStorage.setItem(CLIENT_ID_KEY, clientId);
-      window.localStorage.setItem(CLIENT_SECRET_KEY, clientSecret);
       window.localStorage.setItem(PRIVATE_KEY_KEY, privateKey);
       window.localStorage.setItem(KEY_ID_KEY, keyId);
     } catch (error) {
       console.error('Failed to write Okta config to localStorage', error);
     }
-  }, [orgUrl, apiToken, authMode, clientId, clientSecret, privateKey, keyId, isInitialized]);
+  }, [orgUrl, apiToken, authMode, clientId, privateKey, keyId, isInitialized]);
 
   const resetConfig = () => {
     setOrgUrl('');
     setApiToken('');
     setAuthMode('ssws');
     setClientId('');
-    setClientSecret('');
     setPrivateKey('');
     setKeyId('');
     if (typeof window !== 'undefined') {
@@ -140,7 +137,6 @@ export function OktaProvider({ children }: { children: ReactNode }) {
       window.localStorage.removeItem(API_TOKEN_KEY);
       window.localStorage.removeItem(AUTH_MODE_KEY);
       window.localStorage.removeItem(CLIENT_ID_KEY);
-      window.localStorage.removeItem(CLIENT_SECRET_KEY);
       window.localStorage.removeItem(PRIVATE_KEY_KEY);
       window.localStorage.removeItem(KEY_ID_KEY);
     }
@@ -153,14 +149,12 @@ export function OktaProvider({ children }: { children: ReactNode }) {
         apiToken,
         authMode,
         clientId,
-        clientSecret,
         privateKey,
         keyId,
         setOrgUrl,
         setApiToken,
         setAuthMode,
         setClientId,
-        setClientSecret,
         setPrivateKey,
         setKeyId,
         resetConfig,

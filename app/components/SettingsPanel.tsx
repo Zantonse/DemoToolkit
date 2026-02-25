@@ -28,7 +28,6 @@ interface FieldErrors {
   orgUrl?: string;
   apiToken?: string;
   clientId?: string;
-  clientSecret?: string;
   privateKey?: string;
   keyId?: string;
 }
@@ -42,14 +41,12 @@ export function SettingsPanel() {
     apiToken,
     authMode,
     clientId,
-    clientSecret,
     privateKey,
     keyId,
     setOrgUrl,
     setApiToken,
     setAuthMode,
     setClientId,
-    setClientSecret,
     setPrivateKey,
     setKeyId,
     resetConfig,
@@ -57,7 +54,6 @@ export function SettingsPanel() {
   } = useOkta();
 
   const [showToken, setShowToken] = useState(false);
-  const [showClientSecret, setShowClientSecret] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 

@@ -20,7 +20,7 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useOkta } from '../context/OktaContext';
-import { automationScripts } from '../../lib/data/automationScripts';
+import { automationScripts, type ScriptId } from '../../lib/data/automationScripts';
 import type { AutomationScript } from '../../lib/types/automation';
 import type { OktaActionResult } from '../../lib/types/okta';
 import {
@@ -41,32 +41,10 @@ import {
   createEntitlementBundles,
 } from '../actions/oktaActions';
 
-/**
- * Union type of all valid script IDs
- * Must match the IDs in lib/data/automationScripts.ts
- */
-type ScriptId =
-  | 'enable-fido2'
-  | 'create-super-admins-group'
-  | 'populate-demo-users'
-  | 'create-standard-department-groups'
-  | 'create-device-assurance-policies'
-  | 'configure-entity-risk-policy'
-  | 'add-salesforce-saml-app'
-  | 'add-box-app'
-  | 'create-access-certification-campaign'
-  | 'setup-realms'
-  | 'add-new-administrator'
-  | 'run-policy-simulation'
-  | 'setup-sod-demo'
-  | 'create-entitlement-bundles';
-
-
-
 type ScriptResult = OktaActionResult;
 
 export function ScriptRunner() {
-  const { orgUrl, apiToken, clientId, clientSecret, privateKey, keyId } = useOkta();
+  const { orgUrl, apiToken, clientId, privateKey, keyId } = useOkta();
 
   const [runningScriptId, setRunningScriptId] = useState<ScriptId | 'all' | null>(null);
   const [scriptResults, setScriptResults] = useState<Record<string, ScriptResult | null>>({});
@@ -93,7 +71,6 @@ export function ScriptRunner() {
     orgUrl,
     apiToken,
     clientId,
-    clientSecret,
     privateKey,
     keyId,
   });
