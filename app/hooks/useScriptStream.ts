@@ -22,6 +22,7 @@ export function useScriptStream() {
   });
   const abortRef = useRef<AbortController | null>(null);
 
+  // Empty dependency array is intentional: run reads only stable refs (abortRef, setState)
   const run = useCallback(
     async (
       scriptId: string,
@@ -30,7 +31,8 @@ export function useScriptStream() {
     ) => {
       // Cancel any in-flight request
       abortRef.current?.abort();
-      abortRef.current = new AbortController();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       setState({ logs: [], isStreaming: true, result: null, scriptId, error: null });
 
@@ -39,7 +41,7 @@ export function useScriptStream() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ scriptId, config, inputs }),
-          signal: abortRef.current.signal,
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -52,7 +54,16 @@ export function useScriptStream() {
           return;
         }
 
-        const reader = response.body!.getReader();
+        if (!response.body) {
+          setState((prev) => ({
+            ...prev,
+            isStreaming: false,
+            error: 'Response body is not available',
+          }));
+          return;
+        }
+
+        const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
 
@@ -81,7 +92,7 @@ export function useScriptStream() {
                 return newState;
               });
             } catch {
-              // Skip malformed lines
+              console.warn('[useScriptStream] Skipping malformed SSE data:', trimmed);
             }
           }
         }
@@ -89,8 +100,11 @@ export function useScriptStream() {
         // Stream ended — ensure isStreaming is false
         setState((prev) => ({ ...prev, isStreaming: false }));
       } catch (err: unknown) {
+        // Only set error if this abort was from the user's cancel(), not from a re-run
         if (err instanceof DOMException && err.name === 'AbortError') {
-          setState((prev) => ({ ...prev, isStreaming: false, error: 'Cancelled' }));
+          if (abortRef.current === controller) {
+            setState((prev) => ({ ...prev, isStreaming: false, error: 'Cancelled' }));
+          }
         } else {
           const msg = err instanceof Error ? err.message : String(err);
           setState((prev) => ({ ...prev, isStreaming: false, error: msg }));
