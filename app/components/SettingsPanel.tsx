@@ -20,7 +20,6 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import Link from 'next/link';
 import { useOkta } from '../context/OktaContext';
 
 /** Validation errors for form fields */
@@ -222,22 +221,12 @@ export function SettingsPanel() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span
-            className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${connectionStatus.badgeClass}`}
-          >
-            <span className="inline-block h-2 w-2 rounded-full bg-current opacity-70" />
-            {connectionStatus.label}
-          </span>
-
-          {/* Back to Home button in top-right */}
-          <Link
-            href="/"
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-100"
-          >
-            Back to Home
-          </Link>
-        </div>
+        <span
+          className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${connectionStatus.badgeClass}`}
+        >
+          <span className="inline-block h-2 w-2 rounded-full bg-current opacity-70" />
+          {connectionStatus.label}
+        </span>
       </header>
 
       <div className="space-y-6 px-6 py-5">

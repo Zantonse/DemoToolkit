@@ -1,49 +1,46 @@
 /**
  * Script Runner Component
- * 
+ *
  * Main component that displays and executes automation scripts.
- * 
+ *
  * Features:
- * - Display all available scripts in a grid layout
+ * - Filter scripts by category via activeCategory prop
+ * - Search scripts by name/description
  * - Execute individual scripts
  * - Execute all scripts in sequence with "Run All Scripts" button
  * - Display real-time execution status
  * - Show success/error badges and messages
  * - Validate credentials before execution
- * 
- * The component maps script IDs to their corresponding handler functions
- * in app/actions/oktaActions.ts
+ * - Uses script handler registry (lib/scriptRegistry.ts) instead of switch/case
  */
 
 'use client';
 
-import { useState, useMemo } from 'react';
-import Link from 'next/link';
+import { useState, useMemo, useEffect } from 'react';
 import { useOkta } from '../context/OktaContext';
 import { automationScripts, type ScriptId } from '../../lib/data/automationScripts';
+import { getHandler } from '../../lib/scriptRegistry';
 import type { AutomationScript } from '../../lib/types/automation';
 import type { OktaActionResult } from '../../lib/types/okta';
-import {
-  enableFIDO2,
-  createSuperAdminsGroup,
-  populateDemoUsers,
-  createStandardDepartmentGroups,
-  createDeviceAssurancePolicies,
-  configureEntityRiskPolicy,
-  addSalesforceSAMLApp,
-  addBoxApp,
-  createAccessCertificationCampaign,
-  setupRealms,
-  addNewAdministrator,
-  runPolicySimulation,
-  runAllScripts,
-  setupSodDemo,
-  createEntitlementBundles,
-} from '../actions/oktaActions';
+import { runAllScripts } from '../actions/oktaActions';
+import { Badge, Button, Spinner, SearchInput } from './ui';
+import type { CategoryType } from './Sidebar';
 
 type ScriptResult = OktaActionResult;
 
-export function ScriptRunner() {
+interface ScriptRunnerProps {
+  activeCategory?: CategoryType;
+}
+
+const categoryOrder: CategoryType[] = [
+  'Setup & Users',
+  'Security & Policies',
+  'Applications',
+  'Governance',
+  'Tools',
+];
+
+export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
   const { orgUrl, apiToken, clientId, privateKey, keyId } = useOkta();
 
   const [runningScriptId, setRunningScriptId] = useState<ScriptId | 'all' | null>(null);
@@ -52,6 +49,7 @@ export function ScriptRunner() {
   const [scriptInputs, setScriptInputs] = useState<Record<string, Record<string, string | string[]>>>({});
   const [dynamicOptions, setDynamicOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [loadingOptions, setLoadingOptions] = useState<Record<string, boolean>>({});
+  const [searchQuery, setSearchQuery] = useState('');
 
   const hasCredentials = useMemo(
     () => orgUrl.trim() !== '' && apiToken.trim() !== '',
@@ -60,20 +58,44 @@ export function ScriptRunner() {
 
   const isAnyRunning = runningScriptId !== null;
 
+  // Filter scripts by activeCategory
+  const visibleScripts = useMemo(() => {
+    const byCategory =
+      activeCategory === 'all'
+        ? automationScripts
+        : automationScripts.filter((s) => s.category === activeCategory);
+
+    if (!searchQuery.trim()) return byCategory;
+
+    const q = searchQuery.toLowerCase();
+    return byCategory.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q)
+    );
+  }, [activeCategory, searchQuery]);
+
+  // Group visible scripts by category, preserving categoryOrder
+  const scriptsByCategory = useMemo(() => {
+    return visibleScripts.reduce((acc, script) => {
+      const cat = script.category || 'Other';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(script);
+      return acc;
+    }, {} as Record<string, AutomationScript[]>);
+  }, [visibleScripts]);
+
+  // Ordered categories to render (only those that have scripts in current filter)
+  const orderedCategories = useMemo(() => {
+    const all = [...categoryOrder, 'Other'] as string[];
+    return all.filter((c) => scriptsByCategory[c] && scriptsByCategory[c].length > 0);
+  }, [scriptsByCategory]);
+
   const updateScriptResult = (scriptId: ScriptId, result: ScriptResult) => {
-    setScriptResults((prev) => ({
-      ...prev,
-      [scriptId]: result,
-    }));
+    setScriptResults((prev) => ({ ...prev, [scriptId]: result }));
   };
 
-  const buildConfig = () => ({
-    orgUrl,
-    apiToken,
-    clientId,
-    privateKey,
-    keyId,
-  });
+  const buildConfig = () => ({ orgUrl, apiToken, clientId, privateKey, keyId });
 
   // Load dynamic options for select fields (e.g., applications list)
   const loadDynamicOptions = async (scriptId: ScriptId, fieldName: string) => {
@@ -96,7 +118,7 @@ export function ScriptRunner() {
         if (response.ok) {
           const payload = await response.json();
           const apps = payload.apps || [];
-          const options = apps.map((app: any) => ({
+          const options = apps.map((app: { id: string; label: string; signOnMode: string }) => ({
             value: app.id,
             label: `${app.label} (${app.signOnMode})`,
           }));
@@ -113,6 +135,23 @@ export function ScriptRunner() {
     }
   };
 
+  // Trigger dynamic option loading via useEffect for visible scripts
+  useEffect(() => {
+    if (!hasCredentials) return;
+    for (const script of visibleScripts) {
+      if (!script.requiresInput || !script.inputFields) continue;
+      for (const field of script.inputFields) {
+        if (field.dynamicOptions) {
+          const cacheKey = `${script.id}-${field.name}`;
+          if (!dynamicOptions[cacheKey] && !loadingOptions[cacheKey]) {
+            loadDynamicOptions(script.id as ScriptId, field.name);
+          }
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleScripts, hasCredentials]);
+
   const handleRunSingle = async (scriptId: ScriptId) => {
     if (!hasCredentials) {
       setGlobalMessage('Please configure your Okta Org URL and API Token before running scripts.');
@@ -126,129 +165,33 @@ export function ScriptRunner() {
       const config = buildConfig();
       let result: ScriptResult | null = null;
 
-      switch (scriptId) {
-        case 'enable-fido2':
-          result = await enableFIDO2(config);
-          break;
-
-        case 'create-super-admins-group':
-          // This now automatically assigns SUPER_ADMIN role after creating the group
-          result = await createSuperAdminsGroup(config);
-          break;
-
-        case 'populate-demo-users':
-          result = await populateDemoUsers(config);
-          break;
-
-        case 'create-standard-department-groups':
-          result = await createStandardDepartmentGroups(config);
-          break;
-
-        case 'create-device-assurance-policies':
-          result = await createDeviceAssurancePolicies(config);
-          break;
-
-        case 'configure-entity-risk-policy':
-          result = await configureEntityRiskPolicy(config);
-          break;
-
-        case 'add-salesforce-saml-app':
-          result = await addSalesforceSAMLApp(config);
-          break;
-
-        case 'add-box-app':
-          result = await addBoxApp(config);
-          break;
-
-        case 'create-access-certification-campaign':
-          result = await createAccessCertificationCampaign(config);
-          break;
-
-        case 'setup-realms':
-          result = await setupRealms(config);
-          break;
-
-        case 'add-new-administrator':
-          const adminInputs = scriptInputs[scriptId] || {};
-          if (!adminInputs.firstName || !adminInputs.lastName || !adminInputs.email) {
+      const handler = getHandler(scriptId);
+      if (!handler) {
+        result = { success: false, message: `Unknown script id: ${scriptId}` };
+      } else {
+        const script = automationScripts.find((s) => s.id === scriptId);
+        if (script?.requiresInput) {
+          const inputs = scriptInputs[scriptId] || {};
+          const missingRequired = script.inputFields?.filter((f) => f.required && !inputs[f.name]);
+          if (missingRequired && missingRequired.length > 0) {
             result = {
               success: false,
-              message: 'Please fill in all required fields (First Name, Last Name, and Email).',
+              message: `Please fill in: ${missingRequired.map((f) => f.label).join(', ')}`,
             };
           } else {
-            result = await addNewAdministrator(config, {
-              firstName: adminInputs.firstName as string,
-              lastName: adminInputs.lastName as string,
-              email: adminInputs.email as string,
-            });
+            result = await handler(config, inputs as Record<string, string | string[] | undefined>);
           }
-          break;
-
-        case 'run-policy-simulation':
-          const simInputs = scriptInputs[scriptId] || {};
-          if (!simInputs.appInstance) {
-            result = {
-              success: false,
-              message: 'Please select an application.',
-            };
-          } else {
-            result = await runPolicySimulation(config, {
-              appInstance: simInputs.appInstance as string,
-              policyTypes: simInputs.policyTypes ? (simInputs.policyTypes as string[]) : undefined,
-            });
-          }
-          break;
-
-        case 'setup-sod-demo':
-          const sodInputs = scriptInputs[scriptId] || {};
-          if (!sodInputs.appId) {
-            result = {
-              success: false,
-              message: 'Please enter an Application Instance ID.',
-            };
-          } else {
-            result = await setupSodDemo(config, {
-              appId: sodInputs.appId as string,
-              entitlementName: sodInputs.entitlementName as string | undefined,
-              role1Name: sodInputs.role1Name as string | undefined,
-              role2Name: sodInputs.role2Name as string | undefined,
-            });
-          }
-          break;
-
-        case 'create-entitlement-bundles':
-          const bundleInputs = scriptInputs[scriptId] || {};
-          if (!bundleInputs.entitlementId || !bundleInputs.bundle1Name || !bundleInputs.bundle1ValueId) {
-            result = {
-              success: false,
-              message: 'Please enter the Entitlement ID, Bundle 1 Name, and Bundle 1 Value ID.',
-            };
-          } else {
-            result = await createEntitlementBundles(config, {
-              entitlementId: bundleInputs.entitlementId as string,
-              bundle1Name: bundleInputs.bundle1Name as string,
-              bundle1ValueId: bundleInputs.bundle1ValueId as string,
-              bundle2Name: bundleInputs.bundle2Name as string | undefined,
-              bundle2ValueId: bundleInputs.bundle2ValueId as string | undefined,
-            });
-          }
-          break;
-
-        default:
-          result = {
-            success: false,
-            message: `Unknown script id: ${scriptId}`,
-          };
+        } else {
+          result = await handler(config);
+        }
       }
 
       if (result) {
         updateScriptResult(scriptId, result);
       }
-    } catch (error: any) {
-      updateScriptResult(scriptId, {
-        success: false,
-        message: error?.message ?? String(error),
-      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      updateScriptResult(scriptId, { success: false, message: msg });
     } finally {
       setRunningScriptId(null);
     }
@@ -299,10 +242,9 @@ export function ScriptRunner() {
       }
 
       setGlobalMessage(overall.message);
-    } catch (error: any) {
-      setGlobalMessage(
-        `Unexpected error while running all scripts: ${error?.message ?? String(error)}`
-      );
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setGlobalMessage(`Unexpected error while running all scripts: ${msg}`);
     } finally {
       setRunningScriptId(null);
     }
@@ -311,255 +253,226 @@ export function ScriptRunner() {
   const renderStatusBadge = (scriptId: ScriptId) => {
     const result = scriptResults[scriptId];
     if (!result) return null;
-
-    const baseClasses =
-      'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border';
-
-    if (result.success) {
-      return (
-        <span className={`${baseClasses} border-emerald-200 bg-emerald-50 text-emerald-700`}>
-          ● Success
-        </span>
-      );
-    }
-
     return (
-      <span className={`${baseClasses} border-red-200 bg-red-50 text-red-700`}>
-        ● Error
-      </span>
+      <Badge variant={result.success ? 'success' : 'error'}>
+        {result.success ? 'Success' : 'Error'}
+      </Badge>
     );
   };
 
   const renderResultMessage = (scriptId: ScriptId) => {
     const result = scriptResults[scriptId];
     if (!result) return null;
-
-    const classes = result.success ? 'text-emerald-700' : 'text-red-600';
-
-    return (
-      <p className={`mt-1 text-xs ${classes}`}>
-        {result.message}
-      </p>
-    );
+    const classes = result.success ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600 dark:text-red-400';
+    return <p className={`mt-1 text-xs ${classes}`}>{result.message}</p>;
   };
 
   const isScriptRunning = (scriptId: ScriptId) =>
     runningScriptId === scriptId || runningScriptId === 'all';
 
-  const Spinner = () => (
-    <span className="inline-block h-4 w-4 animate-spin rounded-full border border-sky-500 border-t-transparent" />
-  );
-
-  // Group scripts by category
-  const scriptsByCategory = automationScripts.reduce((acc, script) => {
-    const category = script.category || 'Other';
-    if (!acc[category]) {
-      acc[category] = [];
-    }
-    acc[category].push(script);
-    return acc;
-  }, {} as Record<string, AutomationScript[]>);
-
-  const categoryOrder = [
-    'Setup & Users',
-    'Security & Policies',
-    'Applications',
-    'Governance',
-    'Other'
-  ];
+  const categoryTitle =
+    activeCategory === 'all' ? 'All Scripts' : activeCategory;
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-      <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold text-slate-900">Automation Scripts</h2>
-          <p className="text-sm text-slate-500">
-            Run common Okta SE setup workflows against your configured org.
+    <section className="space-y-4">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+            {categoryTitle}
+          </h2>
+          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+            Run Okta SE setup workflows against your configured org.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleRunAll}
-            disabled={isAnyRunning || !hasCredentials}
-            className="inline-flex items-center gap-2 rounded-md bg-sky-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {runningScriptId === 'all' ? <Spinner /> : null}
-            Run All Scripts
-          </button>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleRunAll}
+          disabled={isAnyRunning || !hasCredentials}
+          loading={runningScriptId === 'all'}
+        >
+          Run All Scripts
+        </Button>
+      </div>
 
-          <Link
-            href="/settings"
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-100"
-          >
-            Settings
-          </Link>
+      {/* Search */}
+      <SearchInput
+        value={searchQuery}
+        onChange={setSearchQuery}
+        placeholder="Search scripts by name or description…"
+      />
+
+      {/* Credentials warning */}
+      {!hasCredentials && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+          <p className="font-medium">Okta credentials not configured.</p>
+          <p className="mt-0.5 text-xs">
+            Set your Okta Org URL and API Token in Settings before running scripts.
+          </p>
         </div>
-      </header>
+      )}
 
-      <div className="space-y-4 px-6 py-4">
-        {/* Credentials warning */}
-        {!hasCredentials && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            <p className="font-medium">Okta credentials not configured.</p>
-            <p>
-              Set your Okta Org URL and API Token in the{' '}
-              <Link href="/settings" className="underline">
-                Settings
-              </Link>{' '}
-              page before running scripts.
-            </p>
-          </div>
-        )}
+      {/* Global message */}
+      {globalMessage && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          {globalMessage}
+        </div>
+      )}
 
-        {/* Global message */}
-        {globalMessage && (
-          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            {globalMessage}
-          </div>
-        )}
+      {/* Empty state */}
+      {visibleScripts.length === 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white py-12 text-center dark:border-slate-700 dark:bg-slate-800">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {searchQuery ? 'No scripts match your search.' : 'No scripts in this category.'}
+          </p>
+        </div>
+      )}
 
-        {/* Script cards grouped by category */}
-        <div className="space-y-8">
-          {categoryOrder.map((category) => {
-            const scripts = scriptsByCategory[category];
-            if (!scripts || scripts.length === 0) return null;
+      {/* Script cards grouped by category */}
+      <div className="space-y-8">
+        {orderedCategories.map((category) => {
+          const scripts = scriptsByCategory[category];
+          if (!scripts || scripts.length === 0) return null;
 
-            return (
-              <div key={category}>
-                <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-slate-500">
+          return (
+            <div key={category}>
+              {/* Only show category heading when showing "all" or when showing a single category but still want heading */}
+              {(activeCategory === 'all' || orderedCategories.length > 1) && (
+                <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   {category}
                 </h3>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {scripts.map((script: AutomationScript) => {
-                    const scriptId = script.id as ScriptId;
-                    const running = isScriptRunning(scriptId);
+              )}
+              <div className="grid gap-4 md:grid-cols-2">
+                {scripts.map((script: AutomationScript) => {
+                  const scriptId = script.id as ScriptId;
+                  const running = isScriptRunning(scriptId);
 
-                    return (
-                      <article
-                        key={script.id}
-                        className="flex flex-col justify-between rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm"
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <h3 className="text-sm font-semibold text-slate-900">
-                                {script.name}
-                              </h3>
-                              <p className="mt-1 text-xs text-slate-600">
-                                {script.description}
-                              </p>
-                            </div>
-                            {renderStatusBadge(scriptId)}
+                  return (
+                    <article
+                      key={script.id}
+                      className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-slate-700 dark:bg-slate-800"
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                              {script.name}
+                            </h4>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                              {script.description}
+                            </p>
                           </div>
-
-                          {renderResultMessage(scriptId)}
+                          {renderStatusBadge(scriptId)}
                         </div>
 
-                        {/* Input fields for scripts that require them */}
-                        {script.requiresInput && script.inputFields && (
-                          <div className="mt-3 space-y-2">
-                            {script.inputFields.map((field) => {
-                              const cacheKey = `${scriptId}-${field.name}`;
-                              const isLoadingOpts = loadingOptions[cacheKey];
-                              const options = field.dynamicOptions
-                                ? dynamicOptions[cacheKey] || []
-                                : field.options || [];
+                        {renderResultMessage(scriptId)}
+                      </div>
 
-                              // Load dynamic options on mount if needed
-                              if (field.dynamicOptions && !isLoadingOpts && options.length === 0) {
-                                loadDynamicOptions(scriptId, field.name);
-                              }
+                      {/* Input fields for scripts that require them */}
+                      {script.requiresInput && script.inputFields && (
+                        <div className="mt-3 space-y-2">
+                          {script.inputFields.map((field) => {
+                            const cacheKey = `${scriptId}-${field.name}`;
+                            const isLoadingOpts = loadingOptions[cacheKey];
+                            const options = field.dynamicOptions
+                              ? dynamicOptions[cacheKey] || []
+                              : field.options || [];
 
-                              return (
-                                <div key={field.name}>
-                                  <label htmlFor={`${scriptId}-${field.name}`} className="block text-xs font-medium text-slate-700">
-                                    {field.label} {field.required && <span className="text-red-500">*</span>}
-                                  </label>
-                                  
-                                  {field.type === 'select' ? (
-                                    <select
-                                      id={`${scriptId}-${field.name}`}
-                                      multiple={field.multiple}
-                                      value={field.multiple 
-                                        ? (scriptInputs[scriptId]?.[field.name] as string[] || [])
-                                        : (scriptInputs[scriptId]?.[field.name] as string || '')}
-                                      onChange={(e) => {
-                                        const value = field.multiple
-                                          ? Array.from(e.target.selectedOptions, (option) => option.value)
-                                          : e.target.value;
-                                        setScriptInputs((prev) => ({
-                                          ...prev,
-                                          [scriptId]: {
-                                            ...prev[scriptId],
-                                            [field.name]: value,
-                                          },
-                                        }));
-                                      }}
-                                      disabled={isAnyRunning || isLoadingOpts}
-                                      className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
-                                      size={field.multiple ? 4 : undefined}
-                                    >
-                                      {!field.multiple && <option value="">-- Select {field.label} --</option>}
-                                      {isLoadingOpts ? (
-                                        <option value="" disabled>Loading...</option>
-                                      ) : (
-                                        options.map((opt) => (
-                                          <option key={opt.value} value={opt.value}>
-                                            {opt.label}
-                                          </option>
-                                        ))
-                                      )}
-                                    </select>
-                                  ) : (
-                                    <input
-                                      type={field.type}
-                                      id={`${scriptId}-${field.name}`}
-                                      placeholder={field.placeholder}
-                                      value={(scriptInputs[scriptId]?.[field.name] as string) || ''}
-                                      onChange={(e) => {
-                                        setScriptInputs((prev) => ({
-                                          ...prev,
-                                          [scriptId]: {
-                                            ...prev[scriptId],
-                                            [field.name]: e.target.value,
-                                          },
-                                        }));
-                                      }}
-                                      disabled={isAnyRunning}
-                                      className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
-                                    />
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                            return (
+                              <div key={field.name}>
+                                <label
+                                  htmlFor={`${scriptId}-${field.name}`}
+                                  className="block text-xs font-medium text-slate-700 dark:text-slate-300"
+                                >
+                                  {field.label}{' '}
+                                  {field.required && <span className="text-red-500">*</span>}
+                                </label>
 
-                        <div className="mt-3 flex items-center justify-between">
-                          <p className="text-[11px] text-slate-400">
-                            Uses Okta Management APIs. Ensure your token has the
-                            appropriate scopes.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => handleRunSingle(scriptId)}
-                            disabled={isAnyRunning || !hasCredentials}
-                            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {running && <Spinner />}
-                            <span>{running ? 'Running…' : 'Run'}</span>
-                          </button>
+                                {field.type === 'select' ? (
+                                  <select
+                                    id={`${scriptId}-${field.name}`}
+                                    multiple={field.multiple}
+                                    value={
+                                      field.multiple
+                                        ? ((scriptInputs[scriptId]?.[field.name] as string[]) || [])
+                                        : ((scriptInputs[scriptId]?.[field.name] as string) || '')
+                                    }
+                                    onChange={(e) => {
+                                      const value = field.multiple
+                                        ? Array.from(e.target.selectedOptions, (o) => o.value)
+                                        : e.target.value;
+                                      setScriptInputs((prev) => ({
+                                        ...prev,
+                                        [scriptId]: { ...prev[scriptId], [field.name]: value },
+                                      }));
+                                    }}
+                                    disabled={isAnyRunning || isLoadingOpts}
+                                    className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:border-sky-400 dark:disabled:bg-slate-800"
+                                    size={field.multiple ? 4 : undefined}
+                                  >
+                                    {!field.multiple && (
+                                      <option value="">-- Select {field.label} --</option>
+                                    )}
+                                    {isLoadingOpts ? (
+                                      <option value="" disabled>
+                                        Loading…
+                                      </option>
+                                    ) : (
+                                      options.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>
+                                          {opt.label}
+                                        </option>
+                                      ))
+                                    )}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type={field.type}
+                                    id={`${scriptId}-${field.name}`}
+                                    placeholder={field.placeholder}
+                                    value={(scriptInputs[scriptId]?.[field.name] as string) || ''}
+                                    onChange={(e) => {
+                                      setScriptInputs((prev) => ({
+                                        ...prev,
+                                        [scriptId]: {
+                                          ...prev[scriptId],
+                                          [field.name]: e.target.value,
+                                        },
+                                      }));
+                                    }}
+                                    disabled={isAnyRunning}
+                                    className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:focus:border-sky-400 dark:disabled:bg-slate-800"
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                      </article>
-                    );
-                  })}
-                </div>
+                      )}
+
+                      <div className="mt-4 flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                          Uses Okta Management APIs
+                        </p>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleRunSingle(scriptId)}
+                          disabled={isAnyRunning || !hasCredentials}
+                          loading={running}
+                        >
+                          {running ? 'Running…' : 'Run'}
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })}
       </div>
     </section>
   );

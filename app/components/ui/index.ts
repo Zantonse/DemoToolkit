@@ -6,3 +6,4 @@ export { Input } from './Input';
 export { Select } from './Select';
 export { SearchInput } from './SearchInput';
 export { ToastProvider, useToast } from './Toast';
+export { ThemeToggle } from './ThemeToggle';
