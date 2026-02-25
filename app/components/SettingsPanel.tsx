@@ -177,14 +177,14 @@ export function SettingsPanel() {
       return {
         label: 'Not configured',
         badgeClass:
-          'bg-slate-100 text-slate-700 border border-slate-200',
+          'bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600',
       };
     }
 
     if (hasErrors) {
       return {
         label: 'Invalid configuration',
-        badgeClass: 'bg-red-50 text-red-700 border border-red-200',
+        badgeClass: 'bg-red-50 text-red-700 border border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800',
       };
     }
 
@@ -192,31 +192,31 @@ export function SettingsPanel() {
       return {
         label: 'Connected',
         badgeClass:
-          'bg-emerald-50 text-emerald-700 border border-emerald-200',
+          'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-400 dark:border-emerald-800',
       };
     }
 
     return {
       label: 'Ready',
-      badgeClass: 'bg-sky-50 text-sky-700 border border-sky-200',
+      badgeClass: 'bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950 dark:text-sky-400 dark:border-sky-800',
     };
   }, [orgUrl, apiToken, errors, testStatus]);
 
   const testStatusClasses =
     testStatus === 'success'
-      ? 'text-emerald-700'
+      ? 'text-emerald-700 dark:text-emerald-400'
       : testStatus === 'error'
-      ? 'text-red-600'
-      : 'text-slate-500';
+      ? 'text-red-600 dark:text-red-400'
+      : 'text-slate-500 dark:text-slate-400';
 
   return (
-    <section className="max-w-2xl rounded-xl border border-slate-200 bg-white shadow-sm">
-      <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+    <section className="max-w-2xl rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
+      <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Okta Settings
           </h2>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
             Configure the org and token used by your SE Toolkit automation.
           </p>
         </div>
@@ -231,7 +231,7 @@ export function SettingsPanel() {
 
       <div className="space-y-6 px-6 py-5">
         {!isInitialized && (
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-400 dark:text-slate-500">
             Loading saved settings…
           </p>
         )}
@@ -240,7 +240,7 @@ export function SettingsPanel() {
         <div className="space-y-1.5">
           <label
             htmlFor="orgUrl"
-            className="block text-sm font-medium text-slate-800"
+            className="block text-sm font-medium text-slate-800 dark:text-slate-200"
           >
             Okta Org URL
           </label>
@@ -252,16 +252,16 @@ export function SettingsPanel() {
             onChange={(e) => setOrgUrl(e.target.value)}
             onBlur={validate}
             placeholder="https://your-org.okta.com"
-            className={`block w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 ${
+            className={`block w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:bg-slate-900 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:ring-sky-400 ${
               errors.orgUrl
-                ? 'border-red-300 focus:border-red-400 focus:ring-red-400'
-                : 'border-slate-300 focus:border-sky-500'
+                ? 'border-red-300 focus:border-red-400 focus:ring-red-400 dark:border-red-700'
+                : 'border-slate-300 focus:border-sky-500 dark:border-slate-600 dark:focus:border-sky-400'
             }`}
           />
           {errors.orgUrl && (
-            <p className="text-xs text-red-600">{errors.orgUrl}</p>
+            <p className="text-xs text-red-600 dark:text-red-400">{errors.orgUrl}</p>
           )}
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             Use the base URL of the Okta tenant you use for demos.
           </p>
         </div>
@@ -271,14 +271,14 @@ export function SettingsPanel() {
           <div className="flex items-center justify-between">
             <label
               htmlFor="apiToken"
-              className="block text-sm font-medium text-slate-800"
+              className="block text-sm font-medium text-slate-800 dark:text-slate-200"
             >
               API Token
             </label>
             <button
               type="button"
               onClick={() => setShowToken((prev) => !prev)}
-              className="text-xs font-medium text-sky-700 hover:text-sky-800"
+              className="text-xs font-medium text-sky-700 hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300"
             >
               {showToken ? 'Hide token' : 'Show token'}
             </button>
@@ -292,37 +292,37 @@ export function SettingsPanel() {
               onChange={(e) => setApiToken(e.target.value)}
               onBlur={validate}
               placeholder="Paste your Okta API token"
-              className={`block w-full rounded-md border px-3 py-2 pr-24 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 ${
+              className={`block w-full rounded-md border px-3 py-2 pr-24 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:bg-slate-900 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:ring-sky-400 ${
                 errors.apiToken
-                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400'
-                  : 'border-slate-300 focus:border-sky-500'
+                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400 dark:border-red-700'
+                  : 'border-slate-300 focus:border-sky-500 dark:border-slate-600 dark:focus:border-sky-400'
               }`}
             />
           </div>
           {errors.apiToken && (
-            <p className="text-xs text-red-600">{errors.apiToken}</p>
+            <p className="text-xs text-red-600 dark:text-red-400">{errors.apiToken}</p>
           )}
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             Stored in your browser&apos;s localStorage; this panel does not log
             or persist the token server-side.
           </p>
         </div>
 
         {/* OAuth 2.0 Section for OIG APIs */}
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-4">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-4 dark:border-slate-700 dark:bg-slate-900/50">
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-800">
+              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">
                 OAuth 2.0 Credentials (for OIG APIs)
               </h3>
-              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 dark:text-amber-400 dark:bg-amber-950 dark:border-amber-800">
                 Required for Governance
               </span>
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Required for Identity Governance scripts (SoD, Entitlements). Create an API Services app with <strong>private_key_jwt</strong> authentication and grant scopes:{' '}
-              <code className="text-[10px] bg-slate-200 px-1 rounded">okta.governance.entitlements.manage</code>,{' '}
-              <code className="text-[10px] bg-slate-200 px-1 rounded">okta.governance.riskRule.manage</code>
+              <code className="text-[10px] bg-slate-200 px-1 rounded dark:bg-slate-700 dark:text-slate-300">okta.governance.entitlements.manage</code>,{' '}
+              <code className="text-[10px] bg-slate-200 px-1 rounded dark:bg-slate-700 dark:text-slate-300">okta.governance.riskRule.manage</code>
             </p>
           </div>
 
@@ -330,7 +330,7 @@ export function SettingsPanel() {
           <div className="space-y-1.5">
             <label
               htmlFor="clientId"
-              className="block text-sm font-medium text-slate-800"
+              className="block text-sm font-medium text-slate-800 dark:text-slate-200"
             >
               Client ID
             </label>
@@ -342,14 +342,14 @@ export function SettingsPanel() {
               onChange={(e) => setClientId(e.target.value)}
               onBlur={validate}
               placeholder="0oaxxxxxxxxxxxxxxxx"
-              className={`block w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 ${
+              className={`block w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:bg-slate-900 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:ring-sky-400 ${
                 errors.clientId
-                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400'
-                  : 'border-slate-300 focus:border-sky-500'
+                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400 dark:border-red-700'
+                  : 'border-slate-300 focus:border-sky-500 dark:border-slate-600 dark:focus:border-sky-400'
               }`}
             />
             {errors.clientId && (
-              <p className="text-xs text-red-600">{errors.clientId}</p>
+              <p className="text-xs text-red-600 dark:text-red-400">{errors.clientId}</p>
             )}
           </div>
 
@@ -357,7 +357,7 @@ export function SettingsPanel() {
           <div className="space-y-1.5">
             <label
               htmlFor="keyId"
-              className="block text-sm font-medium text-slate-800"
+              className="block text-sm font-medium text-slate-800 dark:text-slate-200"
             >
               Key ID (kid)
             </label>
@@ -369,16 +369,16 @@ export function SettingsPanel() {
               onChange={(e) => setKeyId(e.target.value)}
               onBlur={validate}
               placeholder="Key ID from your public key"
-              className={`block w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 ${
+              className={`block w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:bg-slate-900 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:ring-sky-400 ${
                 errors.keyId
-                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400'
-                  : 'border-slate-300 focus:border-sky-500'
+                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400 dark:border-red-700'
+                  : 'border-slate-300 focus:border-sky-500 dark:border-slate-600 dark:focus:border-sky-400'
               }`}
             />
             {errors.keyId && (
-              <p className="text-xs text-red-600">{errors.keyId}</p>
+              <p className="text-xs text-red-600 dark:text-red-400">{errors.keyId}</p>
             )}
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Found in the app&apos;s General tab → Public Keys section after adding a key.
             </p>
           </div>
@@ -387,7 +387,7 @@ export function SettingsPanel() {
           <div className="space-y-1.5">
             <label
               htmlFor="privateKey"
-              className="block text-sm font-medium text-slate-800"
+              className="block text-sm font-medium text-slate-800 dark:text-slate-200"
             >
               Private Key (PEM format)
             </label>
@@ -399,16 +399,16 @@ export function SettingsPanel() {
               onChange={(e) => setPrivateKey(e.target.value)}
               onBlur={validate}
               placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
-              className={`block w-full rounded-md border px-3 py-2 text-xs font-mono shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 ${
+              className={`block w-full rounded-md border px-3 py-2 text-xs font-mono shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 dark:bg-slate-900 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:ring-sky-400 ${
                 errors.privateKey
-                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400'
-                  : 'border-slate-300 focus:border-sky-500'
+                  ? 'border-red-300 focus:border-red-400 focus:ring-red-400 dark:border-red-700'
+                  : 'border-slate-300 focus:border-sky-500 dark:border-slate-600 dark:focus:border-sky-400'
               }`}
             />
             {errors.privateKey && (
-              <p className="text-xs text-red-600">{errors.privateKey}</p>
+              <p className="text-xs text-red-600 dark:text-red-400">{errors.privateKey}</p>
             )}
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               The private key generated when creating a public key in Okta. Stored locally only.
             </p>
           </div>
@@ -416,7 +416,7 @@ export function SettingsPanel() {
 
         {/* Connection test status */}
         {testStatus !== 'idle' && (
-          <div className="rounded-md bg-slate-50 px-3 py-2 text-xs">
+          <div className="rounded-md bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900/50">
             <p className={testStatusClasses}>
               {testMessage}
               {testStatus === 'success' && testEmail && (
@@ -432,15 +432,15 @@ export function SettingsPanel() {
         )}
       </div>
 
-      <footer className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-6 py-3">
-        <div className="text-xs text-slate-500">
+      <footer className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-6 py-3 dark:border-slate-700 dark:bg-slate-900/30">
+        <div className="text-xs text-slate-500 dark:text-slate-400">
           {statusMessage && <span>{statusMessage}</span>}
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={handleReset}
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-100"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
           >
             Clear
           </button>
@@ -448,14 +448,14 @@ export function SettingsPanel() {
             type="button"
             onClick={handleTestConnection}
             disabled={isTesting}
-            className="rounded-md border border-sky-600 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 shadow-sm hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-md border border-sky-600 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 shadow-sm hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-sky-500 dark:bg-slate-800 dark:text-sky-400 dark:hover:bg-sky-950"
           >
             {isTesting ? 'Testing…' : 'Test Connection'}
           </button>
           <button
             type="button"
             onClick={handleSave}
-            className="rounded-md bg-sky-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-sky-700"
+            className="rounded-md bg-sky-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 dark:bg-sky-500 dark:hover:bg-sky-600"
           >
             Save Settings
           </button>

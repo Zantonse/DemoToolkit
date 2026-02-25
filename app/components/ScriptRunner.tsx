@@ -23,7 +23,7 @@ import { getHandler } from '../../lib/scriptRegistry';
 import type { AutomationScript } from '../../lib/types/automation';
 import type { OktaActionResult } from '../../lib/types/okta';
 import { runAllScripts } from '../actions/oktaActions';
-import { Badge, Button, Spinner, SearchInput } from './ui';
+import { Badge, Button, Spinner, SearchInput, useToast } from './ui';
 import type { CategoryType } from './Sidebar';
 
 type ScriptResult = OktaActionResult;
@@ -42,6 +42,7 @@ const categoryOrder: CategoryType[] = [
 
 export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
   const { orgUrl, apiToken, clientId, privateKey, keyId } = useOkta();
+  const { addToast } = useToast();
 
   const [runningScriptId, setRunningScriptId] = useState<ScriptId | 'all' | null>(null);
   const [scriptResults, setScriptResults] = useState<Record<string, ScriptResult | null>>({});
@@ -208,10 +209,12 @@ export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
 
       if (result) {
         updateScriptResult(scriptId, result);
+        addToast(result.message, result.success ? 'success' : 'error');
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       updateScriptResult(scriptId, { success: false, message: msg });
+      addToast(msg, 'error');
     } finally {
       setRunningScriptId(null);
     }
@@ -262,9 +265,12 @@ export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
       }
 
       setGlobalMessage(overall.message);
+      addToast(overall.message, overall.success ? 'success' : 'error');
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      setGlobalMessage(`Unexpected error while running all scripts: ${msg}`);
+      const fullMsg = `Unexpected error while running all scripts: ${msg}`;
+      setGlobalMessage(fullMsg);
+      addToast(fullMsg, 'error');
     } finally {
       setRunningScriptId(null);
     }
