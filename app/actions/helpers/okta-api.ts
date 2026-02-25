@@ -112,3 +112,28 @@ export async function oktaFetch<T = unknown>(
 
   return (await res.json()) as T;
 }
+
+/**
+ * Raw Okta fetch wrapper that returns the Response object directly.
+ * Use this when you need to read response headers (e.g. x-total-count).
+ */
+export async function oktaFetchRaw(
+  config: OktaConfig,
+  path: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const baseUrl = normalizeOrgUrl(config.orgUrl);
+  const url = `${baseUrl}${path}`;
+
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `SSWS ${config.apiToken}`,
+      ...(init.headers || {}),
+    },
+    cache: 'no-store',
+  });
+
+  return res;
+}

@@ -7,6 +7,7 @@ import {
   oktaHeaders,
   safeJson,
   oktaFetch,
+  oktaFetchRaw,
   type OktaAuthenticator,
   type OktaGroup,
   type OktaRoleAssignment,
@@ -2627,6 +2628,152 @@ export async function createEntitlementBundles(
     return {
       success: false,
       message: `Error creating entitlement bundles: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Org Health Dashboard
+// ============================================================================
+
+/**
+ * Retrieve org health metrics: user/app/group counts and authenticators.
+ * Count endpoints use ?limit=1 and read the x-total-count response header.
+ * All requests are made in parallel for speed.
+ */
+export async function getOrgHealth(config: OktaConfig): Promise<OktaActionResult> {
+  'use server';
+  try {
+    const [usersRes, appsRes, groupsRes, authenticators, orgInfo] = await Promise.all([
+      oktaFetchRaw(config, '/api/v1/users?limit=1'),
+      oktaFetchRaw(config, '/api/v1/apps?limit=1&filter=status%20eq%20%22ACTIVE%22'),
+      oktaFetchRaw(config, '/api/v1/groups?limit=1'),
+      oktaFetch<OktaAuthenticator[]>(config, '/api/v1/authenticators'),
+      oktaFetch<{ label?: string; name?: string; subdomain?: string }>(config, '/api/v1/org').catch(() => null),
+    ]);
+
+    if (!usersRes.ok) {
+      const text = await usersRes.text().catch(() => '');
+      throw new Error(`Failed to fetch users (${usersRes.status}): ${text || usersRes.statusText}`);
+    }
+    if (!appsRes.ok) {
+      const text = await appsRes.text().catch(() => '');
+      throw new Error(`Failed to fetch apps (${appsRes.status}): ${text || appsRes.statusText}`);
+    }
+    if (!groupsRes.ok) {
+      const text = await groupsRes.text().catch(() => '');
+      throw new Error(`Failed to fetch groups (${groupsRes.status}): ${text || groupsRes.statusText}`);
+    }
+
+    const userCount = parseInt(usersRes.headers.get('x-total-count') ?? '0', 10);
+    const appCount = parseInt(appsRes.headers.get('x-total-count') ?? '0', 10);
+    const groupCount = parseInt(groupsRes.headers.get('x-total-count') ?? '0', 10);
+
+    const orgLabel = orgInfo?.label ?? orgInfo?.name ?? orgInfo?.subdomain ?? '';
+
+    return {
+      success: true,
+      message: 'Org health retrieved',
+      data: {
+        userCount,
+        appCount,
+        groupCount,
+        authenticators: (authenticators ?? []).map((a) => ({
+          name: a.name,
+          key: a.key,
+          status: a.status,
+        })),
+        orgUrl: normalizeOrgUrl(config.orgUrl),
+        orgLabel,
+      },
+    };
+  } catch (err: any) {
+    console.error('getOrgHealth error', err);
+    return {
+      success: false,
+      message: `Error fetching org health: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// System Log Viewer
+// ============================================================================
+
+export type LogEvent = {
+  uuid: string;
+  published: string;
+  eventType: string;
+  displayMessage: string;
+  severity: string;
+  actor: { displayName: string; alternateId: string };
+  outcome: { result: string; reason?: string };
+  client: { ipAddress: string };
+  raw: object;
+};
+
+/**
+ * Retrieve Okta system log events with optional filtering.
+ */
+export async function getSystemLogs(
+  config: OktaConfig,
+  params: { since?: string; filter?: string; keyword?: string; limit?: number } = {}
+): Promise<OktaActionResult> {
+  'use server';
+  try {
+    const limit = params.limit ?? 50;
+
+    // Default since: 1 hour ago
+    const sinceDate = params.since
+      ? params.since
+      : new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    const query = new URLSearchParams();
+    query.set('since', sinceDate);
+    query.set('limit', String(limit));
+    if (params.filter) query.set('filter', params.filter);
+    if (params.keyword) query.set('q', params.keyword);
+
+    const rawEvents = await oktaFetch<Record<string, unknown>[]>(
+      config,
+      `/api/v1/logs?${query.toString()}`
+    );
+
+    const events: LogEvent[] = (rawEvents ?? []).map((e) => {
+      const actor = (e.actor as Record<string, unknown> | undefined) ?? {};
+      const outcome = (e.outcome as Record<string, unknown> | undefined) ?? {};
+      const client = (e.client as Record<string, unknown> | undefined) ?? {};
+      return {
+        uuid: (e.uuid as string) ?? '',
+        published: (e.published as string) ?? '',
+        eventType: (e.eventType as string) ?? '',
+        displayMessage: (e.displayMessage as string) ?? '',
+        severity: (e.severity as string) ?? 'INFO',
+        actor: {
+          displayName: (actor.displayName as string) ?? '',
+          alternateId: (actor.alternateId as string) ?? '',
+        },
+        outcome: {
+          result: (outcome.result as string) ?? '',
+          reason: (outcome.reason as string | undefined),
+        },
+        client: {
+          ipAddress: (client.ipAddress as string) ?? '',
+        },
+        raw: e,
+      };
+    });
+
+    return {
+      success: true,
+      message: `Retrieved ${events.length} log event${events.length === 1 ? '' : 's'}`,
+      data: { events },
+    };
+  } catch (err: any) {
+    console.error('getSystemLogs error', err);
+    return {
+      success: false,
+      message: `Error fetching system logs: ${err.message ?? String(err)}`,
     };
   }
 }
