@@ -1,16 +1,29 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Sidebar, type ViewType, type CategoryType } from './Sidebar';
 import { ScriptRunner } from './ScriptRunner';
 import { SettingsPanel } from './SettingsPanel';
 import { OrgHealthDashboard } from './OrgHealthDashboard';
 import { SystemLogViewer } from './SystemLogViewer';
+import { LogPanel } from './LogPanel';
+import { useScriptStream } from '../hooks/useScriptStream';
+import type { OktaConfig, OktaActionResult } from '../../lib/types/okta';
 
 export function AppShell() {
   const [activeView, setActiveView] = useState<ViewType>('scripts');
   const [activeCategory, setActiveCategory] = useState<CategoryType>('all');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [logPanelOpen, setLogPanelOpen] = useState(false);
+
+  const streamState = useScriptStream();
+
+  // Open the log panel automatically when streaming starts
+  useEffect(() => {
+    if (streamState.isStreaming) {
+      setLogPanelOpen(true);
+    }
+  }, [streamState.isStreaming]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
@@ -58,12 +71,39 @@ export function AppShell() {
           <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">Okta SE Toolkit</span>
         </header>
 
-        {/* Scrollable content area */}
-        <main className="flex-1 overflow-y-auto">
+        {/* Scrollable content area — shrinks when log panel is open */}
+        <main
+          style={logPanelOpen ? { flex: '1 1 0', minHeight: 0 } : undefined}
+          className="flex-1 overflow-y-auto"
+        >
           <div className="mx-auto max-w-6xl px-4 py-6 lg:px-6 lg:py-8">
-            <MainContent activeView={activeView} activeCategory={activeCategory} />
+            <MainContent
+              activeView={activeView}
+              activeCategory={activeCategory}
+              onStreamRun={streamState.run}
+              streamResult={streamState.result}
+              streamScriptId={streamState.scriptId}
+              isStreaming={streamState.isStreaming}
+            />
           </div>
         </main>
+
+        {/* Log panel — rendered below main, above footer (if any) */}
+        {logPanelOpen && (
+          <LogPanel
+            logs={streamState.logs}
+            isStreaming={streamState.isStreaming}
+            result={streamState.result}
+            scriptId={streamState.scriptId}
+            error={streamState.error}
+            onClose={() => {
+              streamState.cancel();
+              streamState.clearLogs();
+              setLogPanelOpen(false);
+            }}
+            onCancel={() => streamState.cancel()}
+          />
+        )}
       </div>
     </div>
   );
@@ -72,9 +112,20 @@ export function AppShell() {
 interface MainContentProps {
   activeView: ViewType;
   activeCategory: CategoryType;
+  onStreamRun: (scriptId: string, config: OktaConfig, inputs?: Record<string, string | string[] | undefined>) => void;
+  streamResult: OktaActionResult | null;
+  streamScriptId: string | null;
+  isStreaming: boolean;
 }
 
-function MainContent({ activeView, activeCategory }: MainContentProps) {
+function MainContent({
+  activeView,
+  activeCategory,
+  onStreamRun,
+  streamResult,
+  streamScriptId,
+  isStreaming,
+}: MainContentProps) {
   if (activeView === 'settings') {
     return (
       <div>
@@ -98,5 +149,13 @@ function MainContent({ activeView, activeCategory }: MainContentProps) {
   }
 
   // Default: scripts view
-  return <ScriptRunner activeCategory={activeCategory} />;
+  return (
+    <ScriptRunner
+      activeCategory={activeCategory}
+      onStreamRun={onStreamRun}
+      streamResult={streamResult}
+      streamScriptId={streamScriptId}
+      isStreaming={isStreaming}
+    />
+  );
 }

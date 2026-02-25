@@ -16,12 +16,12 @@
 
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useOkta } from '../context/OktaContext';
 import { automationScripts, type ScriptId } from '../../lib/data/automationScripts';
 import { getHandler } from '../../lib/scriptRegistry';
 import type { AutomationScript } from '../../lib/types/automation';
-import type { OktaActionResult } from '../../lib/types/okta';
+import type { OktaActionResult, OktaConfig } from '../../lib/types/okta';
 import { runAllScripts } from '../actions/oktaActions';
 import { Badge, Button, Spinner, SearchInput, useToast } from './ui';
 import type { CategoryType } from './Sidebar';
@@ -30,6 +30,10 @@ type ScriptResult = OktaActionResult;
 
 interface ScriptRunnerProps {
   activeCategory?: CategoryType;
+  onStreamRun?: (scriptId: string, config: OktaConfig, inputs?: Record<string, string | string[] | undefined>) => void;
+  streamResult?: OktaActionResult | null;
+  streamScriptId?: string | null;
+  isStreaming?: boolean;
 }
 
 const categoryOrder: CategoryType[] = [
@@ -40,11 +44,19 @@ const categoryOrder: CategoryType[] = [
   'Tools',
 ];
 
-export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
+export function ScriptRunner({
+  activeCategory = 'all',
+  onStreamRun,
+  streamResult,
+  streamScriptId,
+  isStreaming,
+}: ScriptRunnerProps) {
   const { orgUrl, apiToken, clientId, privateKey, keyId } = useOkta();
   const { addToast } = useToast();
 
   const [runningScriptId, setRunningScriptId] = useState<ScriptId | 'all' | null>(null);
+  // Track the last processed stream result to detect new arrivals
+  const lastStreamResultRef = useRef<OktaActionResult | null>(null);
   const [scriptResults, setScriptResults] = useState<Record<string, ScriptResult | null>>({});
   const [globalMessage, setGlobalMessage] = useState<string | null>(null);
   const [scriptInputs, setScriptInputs] = useState<Record<string, Record<string, string | string[]>>>({});
@@ -57,7 +69,7 @@ export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
     [orgUrl, apiToken]
   );
 
-  const isAnyRunning = runningScriptId !== null;
+  const isAnyRunning = runningScriptId !== null || isStreaming === true;
 
   // Filter scripts by activeCategory
   const visibleScripts = useMemo(() => {
@@ -173,6 +185,30 @@ export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleScripts, hasCredentials]);
 
+  // Watch for stream result to update card state and fire toast
+  useEffect(() => {
+    // Only process if there's a new, non-null result we haven't seen yet
+    if (
+      streamResult != null &&
+      streamResult !== lastStreamResultRef.current &&
+      streamScriptId
+    ) {
+      lastStreamResultRef.current = streamResult;
+      const sid = streamScriptId as ScriptId;
+      updateScriptResult(sid, streamResult);
+      addToast(streamResult.message, streamResult.success ? 'success' : 'error');
+      // Clear the running indicator for this script
+      setRunningScriptId((prev) => (prev === sid ? null : prev));
+    }
+  }, [streamResult, streamScriptId, addToast]);
+
+  // Safety: clear runningScriptId when streaming ends (handles cancel/error without result)
+  useEffect(() => {
+    if (isStreaming === false && streamScriptId) {
+      setRunningScriptId((prev) => (prev === streamScriptId ? null : prev));
+    }
+  }, [isStreaming, streamScriptId]);
+
   const handleRunSingle = async (scriptId: ScriptId) => {
     if (!hasCredentials) {
       setGlobalMessage('Please configure your Okta Org URL and API Token before running scripts.');
@@ -180,31 +216,47 @@ export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
     }
 
     setGlobalMessage(null);
-    setRunningScriptId(scriptId);
 
+    // Validate required inputs before dispatching
+    const script = automationScripts.find((s) => s.id === scriptId);
+    if (script?.requiresInput) {
+      const inputs = scriptInputs[scriptId] || {};
+      const missingRequired = script.inputFields?.filter((f) => f.required && !inputs[f.name]);
+      if (missingRequired && missingRequired.length > 0) {
+        const result: ScriptResult = {
+          success: false,
+          message: `Please fill in: ${missingRequired.map((f) => f.label).join(', ')}`,
+        };
+        updateScriptResult(scriptId, result);
+        addToast(result.message, 'error');
+        return;
+      }
+    }
+
+    setRunningScriptId(scriptId);
+    const config = buildConfig();
+    const inputs = script?.requiresInput
+      ? (scriptInputs[scriptId] as Record<string, string | string[] | undefined> | undefined)
+      : undefined;
+
+    // If streaming is available, delegate to the stream hook
+    if (onStreamRun) {
+      onStreamRun(scriptId, config, inputs);
+      // runningScriptId will be cleared via the streamResult useEffect
+      return;
+    }
+
+    // Fallback: call handler directly (no streaming)
     try {
-      const config = buildConfig();
+      const handler = getHandler(scriptId);
       let result: ScriptResult | null = null;
 
-      const handler = getHandler(scriptId);
       if (!handler) {
         result = { success: false, message: `Unknown script id: ${scriptId}` };
+      } else if (inputs) {
+        result = await handler(config, inputs);
       } else {
-        const script = automationScripts.find((s) => s.id === scriptId);
-        if (script?.requiresInput) {
-          const inputs = scriptInputs[scriptId] || {};
-          const missingRequired = script.inputFields?.filter((f) => f.required && !inputs[f.name]);
-          if (missingRequired && missingRequired.length > 0) {
-            result = {
-              success: false,
-              message: `Please fill in: ${missingRequired.map((f) => f.label).join(', ')}`,
-            };
-          } else {
-            result = await handler(config, inputs as Record<string, string | string[] | undefined>);
-          }
-        } else {
-          result = await handler(config);
-        }
+        result = await handler(config);
       }
 
       if (result) {
@@ -294,7 +346,9 @@ export function ScriptRunner({ activeCategory = 'all' }: ScriptRunnerProps) {
   };
 
   const isScriptRunning = (scriptId: ScriptId) =>
-    runningScriptId === scriptId || runningScriptId === 'all';
+    runningScriptId === scriptId ||
+    runningScriptId === 'all' ||
+    (isStreaming === true && streamScriptId === scriptId);
 
   const categoryTitle =
     activeCategory === 'all' ? 'All Scripts' : activeCategory;
