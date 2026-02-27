@@ -46,6 +46,11 @@ export const SCRIPT_IDS = [
   'create-password-policy',
   'create-enrollment-policy',
   'enable-self-service-registration',
+  'create-custom-admin-role',
+  'setup-event-hooks',
+  'create-oidc-app',
+  'configure-auth-server-policy',
+  'customize-activation-email',
 ] as const;
 
 /**
@@ -733,6 +738,199 @@ export const automationScripts: AutomationScript[] = [
           { value: "yes", label: "Yes — require email verification" },
           { value: "no", label: "No — skip email verification" }
         ]
+      }
+    ]
+  },
+  {
+    id: "create-custom-admin-role",
+    name: "Create Custom Admin Role",
+    description: "Creates a custom IAM administrator role with specific permissions. Resource sets and bindings can be configured separately in the Admin Console.",
+    category: "Governance",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "label",
+        label: "Role Label",
+        type: "text",
+        placeholder: "UserCreator",
+        required: true
+      },
+      {
+        name: "description",
+        label: "Description",
+        type: "text",
+        placeholder: "Can only create and read users",
+        required: true
+      },
+      {
+        name: "permissions",
+        label: "Permissions",
+        type: "select",
+        required: true,
+        multiple: true,
+        options: [
+          { value: "okta.users.create", label: "okta.users.create" },
+          { value: "okta.users.read", label: "okta.users.read" },
+          { value: "okta.users.manage", label: "okta.users.manage" },
+          { value: "okta.groups.read", label: "okta.groups.read" },
+          { value: "okta.groups.manage", label: "okta.groups.manage" },
+          { value: "okta.apps.read", label: "okta.apps.read" },
+          { value: "okta.apps.manage", label: "okta.apps.manage" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "setup-event-hooks",
+    name: "Setup Event Hooks",
+    description: "Creates and activates an Okta event hook that delivers selected event notifications to a specified webhook URL.",
+    category: "Tools",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "webhookUrl",
+        label: "Webhook URL",
+        type: "text",
+        placeholder: "https://your-webhook.example.com/hook",
+        required: true
+      },
+      {
+        name: "authHeader",
+        label: "Authorization Header (optional)",
+        type: "text",
+        placeholder: "Bearer your-secret-token",
+        required: false
+      },
+      {
+        name: "events",
+        label: "Events to Subscribe",
+        type: "select",
+        required: true,
+        multiple: true,
+        options: [
+          { value: "user.lifecycle.create", label: "user.lifecycle.create" },
+          { value: "user.lifecycle.deactivate", label: "user.lifecycle.deactivate" },
+          { value: "user.lifecycle.suspend", label: "user.lifecycle.suspend" },
+          { value: "group.user_membership.add", label: "group.user_membership.add" },
+          { value: "group.user_membership.remove", label: "group.user_membership.remove" },
+          { value: "user.account.lock", label: "user.account.lock" },
+          { value: "user.mfa.factor.activate", label: "user.mfa.factor.activate" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "create-oidc-app",
+    name: "Create OIDC Application",
+    description: "Creates an OIDC application (web, SPA, or service/M2M) and returns the client credentials. PKCE is enforced for web and SPA app types.",
+    category: "Applications",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "label",
+        label: "Application Name",
+        type: "text",
+        placeholder: "My OIDC App",
+        required: true
+      },
+      {
+        name: "appType",
+        label: "Application Type",
+        type: "select",
+        required: true,
+        options: [
+          { value: "web", label: "Web (authorization_code + refresh_token)" },
+          { value: "spa", label: "SPA / Browser (authorization_code, PKCE only)" },
+          { value: "service", label: "Service / M2M (client_credentials)" }
+        ]
+      },
+      {
+        name: "redirectUris",
+        label: "Redirect URIs (comma-separated, required for web/SPA)",
+        type: "text",
+        placeholder: "https://example.com/callback",
+        required: false
+      },
+      {
+        name: "postLogoutUris",
+        label: "Post-Logout Redirect URIs (comma-separated, optional)",
+        type: "text",
+        placeholder: "https://example.com",
+        required: false
+      }
+    ]
+  },
+  {
+    id: "configure-auth-server-policy",
+    name: "Configure Auth Server Access Policy",
+    description: "Creates an access policy and default rule on an authorization server with configurable token lifetimes and allowed grant types.",
+    category: "Applications",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "authServerId",
+        label: "Authorization Server",
+        type: "select",
+        required: true,
+        dynamicOptions: true,
+        placeholder: "Choose an authorization server..."
+      },
+      {
+        name: "policyName",
+        label: "Policy Name",
+        type: "text",
+        placeholder: "API Access Policy",
+        required: true
+      },
+      {
+        name: "accessTokenLifetimeMinutes",
+        label: "Access Token Lifetime (minutes)",
+        type: "text",
+        placeholder: "60",
+        required: true
+      },
+      {
+        name: "refreshTokenLifetimeMinutes",
+        label: "Refresh Token Lifetime (minutes, 0 = unlimited)",
+        type: "text",
+        placeholder: "0",
+        required: false
+      },
+      {
+        name: "grantTypes",
+        label: "Allowed Grant Types",
+        type: "select",
+        required: true,
+        multiple: true,
+        options: [
+          { value: "authorization_code", label: "authorization_code" },
+          { value: "client_credentials", label: "client_credentials" },
+          { value: "refresh_token", label: "refresh_token" },
+          { value: "implicit", label: "implicit" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "customize-activation-email",
+    name: "Customize Activation Email",
+    description: "Creates or updates the user activation email template for the default brand. Uses the Okta Brands API. The body must include ${activationLink}.",
+    category: "Customization",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "subject",
+        label: "Email Subject",
+        type: "text",
+        placeholder: "Welcome to {{orgName}}!",
+        required: true
+      },
+      {
+        name: "body",
+        label: "Email Body HTML (optional — leave blank for default template)",
+        type: "text",
+        placeholder: "<html>...(must include ${activationLink})</html>",
+        required: false
       }
     ]
   }

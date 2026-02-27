@@ -40,6 +40,11 @@ import {
   createPasswordPolicy,
   createEnrollmentPolicy,
   enableSelfServiceRegistration,
+  createCustomAdminRole,
+  setupEventHooks,
+  createOidcApp,
+  configureAuthServerPolicy,
+  customizeActivationEmail,
 } from '../app/actions/oktaActions';
 
 export type HandlerFn = (
@@ -168,6 +173,38 @@ const handlers: Record<string, HandlerFn> = {
     enableSelfServiceRegistration(config, {
       appInstance: (inputs?.appInstance as string) || '',
       requireEmailVerification: (inputs?.requireEmailVerification as string) || 'yes',
+    }, log),
+  'create-custom-admin-role': (config, inputs, log) =>
+    createCustomAdminRole(config, {
+      label: (inputs?.label as string) || '',
+      description: (inputs?.description as string) || '',
+      permissions: (inputs?.permissions as string | string[]) || [],
+    }, log),
+  'setup-event-hooks': (config, inputs, log) =>
+    setupEventHooks(config, {
+      webhookUrl: (inputs?.webhookUrl as string) || '',
+      authHeader: inputs?.authHeader as string | undefined,
+      events: (inputs?.events as string | string[]) || [],
+    }, log),
+  'create-oidc-app': (config, inputs, log) =>
+    createOidcApp(config, {
+      label: (inputs?.label as string) || '',
+      appType: (inputs?.appType as string) || 'web',
+      redirectUris: inputs?.redirectUris as string | undefined,
+      postLogoutUris: inputs?.postLogoutUris as string | undefined,
+    }, log),
+  'configure-auth-server-policy': (config, inputs, log) =>
+    configureAuthServerPolicy(config, {
+      authServerId: (inputs?.authServerId as string) || '',
+      policyName: (inputs?.policyName as string) || '',
+      accessTokenLifetimeMinutes: (inputs?.accessTokenLifetimeMinutes as string) || '60',
+      refreshTokenLifetimeMinutes: inputs?.refreshTokenLifetimeMinutes as string | undefined,
+      grantTypes: (inputs?.grantTypes as string | string[]) || [],
+    }, log),
+  'customize-activation-email': (config, inputs, log) =>
+    customizeActivationEmail(config, {
+      subject: (inputs?.subject as string) || '',
+      body: inputs?.body as string | undefined,
     }, log),
 };
 

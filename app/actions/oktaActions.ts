@@ -3924,3 +3924,550 @@ export async function enableSelfServiceRegistration(
   }
 }
 
+// ============================================================================
+// Create Custom Admin Role
+// ============================================================================
+
+/**
+ * Creates a custom IAM administrator role with specified permissions.
+ * Resource sets and bindings must be configured separately.
+ */
+export async function createCustomAdminRole(
+  config: OktaConfig,
+  inputs: {
+    label: string;
+    description: string;
+    permissions: string | string[];
+  },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const label = inputs.label?.trim();
+    const description = inputs.description?.trim();
+    const permissionsRaw = inputs.permissions;
+    const permissions: string[] = Array.isArray(permissionsRaw)
+      ? permissionsRaw
+      : typeof permissionsRaw === 'string' && permissionsRaw
+      ? permissionsRaw.split(',').map((p) => p.trim()).filter(Boolean)
+      : [];
+
+    if (!label) {
+      return { success: false, message: 'Role label is required.' };
+    }
+    if (!description) {
+      return { success: false, message: 'Role description is required.' };
+    }
+    if (permissions.length === 0) {
+      return { success: false, message: 'At least one permission must be selected.' };
+    }
+
+    log({ level: 'info', message: `Creating custom admin role "${label}" with ${permissions.length} permission(s)...` });
+
+    const role = await oktaFetch<any>(config, '/api/v1/iam/roles', {
+      method: 'POST',
+      body: JSON.stringify({
+        label,
+        description,
+        permissions: permissions.map((p) => ({ label: p })),
+      }),
+    });
+
+    log({ level: 'success', message: `Custom admin role created (ID: ${role.id}).` });
+
+    return {
+      success: true,
+      message: `Custom admin role "${label}" created successfully (Role ID: ${role.id}). Permissions: ${permissions.join(', ')}. Note: assign resource sets and bindings in the Admin Console (Security > Administrators).`,
+      data: role,
+    };
+  } catch (err: any) {
+    console.error('createCustomAdminRole error', err);
+    return {
+      success: false,
+      message: `Error creating custom admin role: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Setup Event Hooks
+// ============================================================================
+
+/**
+ * Creates and activates an Okta event hook for selected events delivered to a webhook URL.
+ * If a hook with the same generated name already exists, returns it without creating a duplicate.
+ */
+export async function setupEventHooks(
+  config: OktaConfig,
+  inputs: {
+    webhookUrl: string;
+    authHeader?: string;
+    events: string | string[];
+  },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const webhookUrl = inputs.webhookUrl?.trim();
+    const authHeader = inputs.authHeader?.trim();
+    const eventsRaw = inputs.events;
+    const events: string[] = Array.isArray(eventsRaw)
+      ? eventsRaw
+      : typeof eventsRaw === 'string' && eventsRaw
+      ? eventsRaw.split(',').map((e) => e.trim()).filter(Boolean)
+      : [];
+
+    if (!webhookUrl) {
+      return { success: false, message: 'Webhook URL is required.' };
+    }
+    if (events.length === 0) {
+      return { success: false, message: 'At least one event must be selected.' };
+    }
+
+    const hookName = `SE Toolkit — ${events.length} event${events.length !== 1 ? 's' : ''}`;
+
+    log({ level: 'info', message: `Checking for existing event hook named "${hookName}"...` });
+
+    const existingHooks = await oktaFetch<any[]>(config, '/api/v1/eventHooks', {
+      method: 'GET',
+    });
+
+    const existing = Array.isArray(existingHooks)
+      ? existingHooks.find((h: any) => h.name === hookName)
+      : null;
+
+    if (existing) {
+      log({ level: 'warn', message: `Event hook "${hookName}" already exists (ID: ${existing.id}).` });
+      return {
+        success: true,
+        message: `Event hook "${hookName}" already exists (ID: ${existing.id}). No changes made.`,
+        data: existing,
+      };
+    }
+
+    // Build channel config
+    const channelConfig: any = {
+      uri: webhookUrl,
+      method: 'POST',
+      headers: [{ key: 'Content-Type', value: 'application/json' }],
+    };
+    if (authHeader) {
+      channelConfig.authScheme = {
+        type: 'HEADER',
+        key: 'Authorization',
+        value: authHeader,
+      };
+    }
+
+    log({ level: 'info', message: `Creating event hook "${hookName}" for ${events.length} event(s)...` });
+
+    const hook = await oktaFetch<any>(config, '/api/v1/eventHooks', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: hookName,
+        events: {
+          type: 'EVENT_TYPE',
+          items: events,
+        },
+        channel: {
+          type: 'HTTP',
+          version: '1.0.0',
+          config: channelConfig,
+        },
+      }),
+    });
+
+    log({ level: 'success', message: `Event hook created (ID: ${hook.id}). Activating...` });
+
+    // Activate the hook
+    await oktaFetch<any>(config, `/api/v1/eventHooks/${hook.id}/lifecycle/activate`, {
+      method: 'POST',
+    });
+
+    log({ level: 'success', message: `Event hook "${hookName}" activated.` });
+
+    return {
+      success: true,
+      message: `Event hook "${hookName}" created and activated (ID: ${hook.id}). Delivering ${events.length} event type(s) to ${webhookUrl}.`,
+      data: hook,
+    };
+  } catch (err: any) {
+    console.error('setupEventHooks error', err);
+    return {
+      success: false,
+      message: `Error setting up event hooks: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Create OIDC Application
+// ============================================================================
+
+/**
+ * Creates an OIDC application (web, SPA, or service/M2M) and returns client credentials.
+ */
+export async function createOidcApp(
+  config: OktaConfig,
+  inputs: {
+    label: string;
+    appType: string;
+    redirectUris?: string;
+    postLogoutUris?: string;
+  },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const label = inputs.label?.trim();
+    const appType = (inputs.appType?.trim() || 'web').toLowerCase();
+    const redirectUris = inputs.redirectUris
+      ? inputs.redirectUris.split(',').map((u) => u.trim()).filter(Boolean)
+      : [];
+    const postLogoutUris = inputs.postLogoutUris
+      ? inputs.postLogoutUris.split(',').map((u) => u.trim()).filter(Boolean)
+      : [];
+
+    if (!label) {
+      return { success: false, message: 'Application name is required.' };
+    }
+    if ((appType === 'web' || appType === 'spa') && redirectUris.length === 0) {
+      return { success: false, message: 'At least one redirect URI is required for web and SPA application types.' };
+    }
+
+    log({ level: 'info', message: `Creating OIDC ${appType} application "${label}"...` });
+
+    // Build payload per app type
+    let oauthClientSettings: any = {};
+    if (appType === 'web') {
+      oauthClientSettings = {
+        application_type: 'web',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        redirect_uris: redirectUris,
+        post_logout_redirect_uris: postLogoutUris.length ? postLogoutUris : undefined,
+        pkce_required: true,
+        token_endpoint_auth_method: 'client_secret_basic',
+      };
+    } else if (appType === 'spa') {
+      oauthClientSettings = {
+        application_type: 'browser',
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        redirect_uris: redirectUris,
+        post_logout_redirect_uris: postLogoutUris.length ? postLogoutUris : undefined,
+        pkce_required: true,
+        token_endpoint_auth_method: 'none',
+      };
+    } else {
+      // service / M2M
+      oauthClientSettings = {
+        application_type: 'service',
+        grant_types: ['client_credentials'],
+        response_types: ['token'],
+        token_endpoint_auth_method: 'client_secret_basic',
+      };
+    }
+
+    const payload = {
+      name: 'oidc_client',
+      label,
+      signOnMode: 'OPENID_CONNECT',
+      credentials: {
+        oauthClient: {
+          token_endpoint_auth_method: oauthClientSettings.token_endpoint_auth_method,
+        },
+      },
+      settings: {
+        oauthClient: oauthClientSettings,
+      },
+    };
+
+    const app = await oktaFetch<any>(config, '/api/v1/apps', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    log({ level: 'success', message: `OIDC application created (App ID: ${app.id}).` });
+
+    // Activate if not already active
+    if (app.status && app.status !== 'ACTIVE') {
+      log({ level: 'info', message: 'Activating application...' });
+      await oktaFetch<any>(config, `/api/v1/apps/${app.id}/lifecycle/activate`, {
+        method: 'POST',
+      });
+      log({ level: 'success', message: 'Application activated.' });
+    }
+
+    const clientId: string = app.credentials?.oauthClient?.client_id || app.id;
+    const clientSecret: string | undefined = app.credentials?.oauthClient?.client_secret;
+
+    let message = `OIDC ${appType} application "${label}" created successfully (App ID: ${app.id}, Client ID: ${clientId}).`;
+    if (clientSecret) {
+      message += ` Client Secret: ${clientSecret}.`;
+    }
+    if (appType === 'spa') {
+      message += ' PKCE is required — no client secret issued.';
+    }
+
+    return {
+      success: true,
+      message,
+      data: app,
+    };
+  } catch (err: any) {
+    console.error('createOidcApp error', err);
+    // Handle "already exists" from Okta
+    if (err.message?.includes('already exists') || err.message?.includes('E0000007')) {
+      return {
+        success: false,
+        message: `An application with that name already exists in your org. Please use a unique name.`,
+      };
+    }
+    return {
+      success: false,
+      message: `Error creating OIDC application: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Configure Auth Server Access Policy
+// ============================================================================
+
+/**
+ * Creates an access policy and a default rule on an authorization server
+ * with configurable token lifetimes and grant type conditions.
+ */
+export async function configureAuthServerPolicy(
+  config: OktaConfig,
+  inputs: {
+    authServerId: string;
+    policyName: string;
+    accessTokenLifetimeMinutes: string;
+    refreshTokenLifetimeMinutes?: string;
+    grantTypes: string | string[];
+  },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const authServerId = inputs.authServerId?.trim();
+    const policyName = inputs.policyName?.trim();
+    const accessTokenLifetime = parseInt(inputs.accessTokenLifetimeMinutes?.trim() || '60', 10);
+    const refreshTokenLifetime = inputs.refreshTokenLifetimeMinutes
+      ? parseInt(inputs.refreshTokenLifetimeMinutes.trim(), 10)
+      : 0;
+    const grantTypesRaw = inputs.grantTypes;
+    const grantTypes: string[] = Array.isArray(grantTypesRaw)
+      ? grantTypesRaw
+      : typeof grantTypesRaw === 'string' && grantTypesRaw
+      ? grantTypesRaw.split(',').map((g) => g.trim()).filter(Boolean)
+      : [];
+
+    if (!authServerId) {
+      return { success: false, message: 'Authorization server selection is required.' };
+    }
+    if (!policyName) {
+      return { success: false, message: 'Policy name is required.' };
+    }
+    if (isNaN(accessTokenLifetime) || accessTokenLifetime <= 0) {
+      return { success: false, message: 'Access token lifetime must be a positive number of minutes.' };
+    }
+    if (grantTypes.length === 0) {
+      return { success: false, message: 'At least one grant type must be selected.' };
+    }
+
+    log({ level: 'info', message: `Creating access policy "${policyName}" on authorization server "${authServerId}"...` });
+
+    // Step 1: Create policy
+    const policy = await oktaFetch<any>(
+      config,
+      `/api/v1/authorizationServers/${authServerId}/policies`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'RESOURCE_ACCESS',
+          name: policyName,
+          description: `Access policy created by Okta SE Toolkit.`,
+          priority: 1,
+          status: 'ACTIVE',
+          conditions: {
+            clients: { include: ['ALL_CLIENTS'] },
+          },
+        }),
+      }
+    );
+
+    log({ level: 'success', message: `Access policy created (ID: ${policy.id}). Creating default rule...` });
+
+    // Step 2: Create rule within the policy
+    const rulePayload: any = {
+      type: 'RESOURCE_ACCESS',
+      name: 'Default Policy Rule',
+      priority: 1,
+      status: 'ACTIVE',
+      conditions: {
+        people: { groups: { include: ['EVERYONE'] } },
+        grantTypes: { include: grantTypes },
+        scopes: { include: ['*'] },
+      },
+      actions: {
+        token: {
+          accessTokenLifetimeMinutes: accessTokenLifetime,
+          refreshTokenLifetimeMinutes: refreshTokenLifetime,
+          refreshTokenWindowMinutes: 10080,
+        },
+      },
+    };
+
+    const rule = await oktaFetch<any>(
+      config,
+      `/api/v1/authorizationServers/${authServerId}/policies/${policy.id}/rules`,
+      {
+        method: 'POST',
+        body: JSON.stringify(rulePayload),
+      }
+    );
+
+    log({ level: 'success', message: `Default policy rule created (ID: ${rule.id}).` });
+
+    return {
+      success: true,
+      message: `Access policy "${policyName}" created (Policy ID: ${policy.id}, Rule ID: ${rule.id}). Access token lifetime: ${accessTokenLifetime} min, Refresh token lifetime: ${refreshTokenLifetime === 0 ? 'unlimited' : `${refreshTokenLifetime} min`}. Grant types: ${grantTypes.join(', ')}.`,
+      data: { policy, rule },
+    };
+  } catch (err: any) {
+    console.error('configureAuthServerPolicy error', err);
+    return {
+      success: false,
+      message: `Error configuring auth server policy: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Customize Activation Email
+// ============================================================================
+
+const DEFAULT_ACTIVATION_EMAIL_BODY = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Activate your account</title></head>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:40px 0;">
+  <table width="600" cellpadding="0" cellspacing="0" style="margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;">
+    <tr><td style="background:#1662DD;padding:24px 32px;">
+      <h1 style="color:#fff;margin:0;font-size:22px;">Welcome to {{orgName}}!</h1>
+    </td></tr>
+    <tr><td style="padding:32px;">
+      <p style="font-size:16px;color:#333;">Hi {{firstName}},</p>
+      <p style="font-size:15px;color:#555;">Your account has been created. Please activate it by clicking the button below.</p>
+      <p style="text-align:center;margin:32px 0;">
+        <a href="\${activationLink}" style="background:#1662DD;color:#fff;text-decoration:none;padding:14px 28px;border-radius:4px;font-size:15px;font-weight:bold;">Activate Account</a>
+      </p>
+      <p style="font-size:13px;color:#888;">Or copy and paste this link into your browser:<br>
+        <a href="\${activationLink}" style="color:#1662DD;">\${activationLink}</a>
+      </p>
+      <p style="font-size:13px;color:#aaa;border-top:1px solid #eee;padding-top:16px;margin-top:24px;">
+        If you did not request this, please ignore this email.
+      </p>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+/**
+ * Creates or updates the user activation email template for the default brand.
+ * Checks for an existing customization and updates it, or creates a new one.
+ */
+export async function customizeActivationEmail(
+  config: OktaConfig,
+  inputs: {
+    subject: string;
+    body?: string;
+  },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const subject = inputs.subject?.trim();
+    const body = inputs.body?.trim() || DEFAULT_ACTIVATION_EMAIL_BODY;
+
+    if (!subject) {
+      return { success: false, message: 'Email subject is required.' };
+    }
+    if (!body.includes('${activationLink}')) {
+      return {
+        success: false,
+        message: 'Email body must include the ${activationLink} variable — Okta requires it for activation emails.',
+      };
+    }
+
+    log({ level: 'info', message: 'Fetching default brand...' });
+
+    const brands = await oktaFetch<any[]>(config, '/api/v1/brands', { method: 'GET' });
+    if (!Array.isArray(brands) || brands.length === 0) {
+      return { success: false, message: 'No brands found in this org. Brands API may not be available.' };
+    }
+
+    const brandId: string = brands[0].id;
+    log({ level: 'info', message: `Using brand ID: ${brandId}. Checking for existing activation email customization...` });
+
+    // List existing customizations
+    const customizations = await oktaFetch<any[]>(
+      config,
+      `/api/v1/brands/${brandId}/templates/email/UserActivation/customizations`,
+      { method: 'GET' }
+    );
+
+    const emailPayload = {
+      subject,
+      body,
+      language: 'en',
+      isDefault: true,
+    };
+
+    let result: any;
+    let action: string;
+
+    const existing = Array.isArray(customizations) && customizations.length > 0
+      ? customizations.find((c: any) => c.language === 'en') || customizations[0]
+      : null;
+
+    if (existing) {
+      log({ level: 'info', message: `Updating existing customization (ID: ${existing.id})...` });
+      result = await oktaFetch<any>(
+        config,
+        `/api/v1/brands/${brandId}/templates/email/UserActivation/customizations/${existing.id}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(emailPayload),
+        }
+      );
+      action = 'updated';
+    } else {
+      log({ level: 'info', message: 'Creating new activation email customization...' });
+      result = await oktaFetch<any>(
+        config,
+        `/api/v1/brands/${brandId}/templates/email/UserActivation/customizations`,
+        {
+          method: 'POST',
+          body: JSON.stringify(emailPayload),
+        }
+      );
+      action = 'created';
+    }
+
+    log({ level: 'success', message: `Activation email customization ${action}.` });
+
+    const baseUrl = normalizeOrgUrl(config.orgUrl);
+    const previewUrl = `${baseUrl}/admin/email/UserActivation/preview`;
+
+    return {
+      success: true,
+      message: `Activation email template ${action} successfully for brand "${brands[0].name || brandId}". Subject: "${subject}". Preview in Admin Console: ${previewUrl}`,
+      data: result,
+    };
+  } catch (err: any) {
+    console.error('customizeActivationEmail error', err);
+    return {
+      success: false,
+      message: `Error customizing activation email: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
