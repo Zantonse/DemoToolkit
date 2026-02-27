@@ -36,6 +36,11 @@ export const SCRIPT_IDS = [
   'create-auth-server',
   'add-custom-claim',
   'add-custom-scope',
+  'add-google-social-idp',
+  'apply-customer-branding',
+  'configure-authenticators',
+  'configure-threat-insight',
+  'reset-demo-user-pool',
 ] as const;
 
 /**
@@ -427,6 +432,155 @@ export const automationScripts: AutomationScript[] = [
         options: [
           { value: "IMPLICIT", label: "Implicit (no user consent required)" },
           { value: "REQUIRED", label: "Required (user must consent)" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "add-google-social-idp",
+    name: "Add Google Social IdP",
+    description: "Adds Google as a social identity provider for social login. Checks for an existing Google IdP before creating. Activates the IdP after creation.",
+    category: "Applications",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "clientId",
+        label: "Google Client ID",
+        type: "text",
+        placeholder: "1234567890-abc.apps.googleusercontent.com",
+        required: true
+      },
+      {
+        name: "clientSecret",
+        label: "Google Client Secret",
+        type: "text",
+        placeholder: "GOCSPX-...",
+        required: true
+      }
+    ]
+  },
+  {
+    id: "apply-customer-branding",
+    name: "Apply Customer Branding",
+    description: "Updates the default brand theme with custom primary and secondary colors. Requires the Okta Brands API. Logo upload requires a separate multipart POST (not supported in this version).",
+    category: "Customization",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "primaryColor",
+        label: "Primary Color (hex)",
+        type: "text",
+        placeholder: "#1662DD",
+        required: true
+      },
+      {
+        name: "secondaryColor",
+        label: "Secondary Color (hex, optional)",
+        type: "text",
+        placeholder: "#EB5757",
+        required: false
+      },
+      {
+        name: "logoUrl",
+        label: "Logo URL (optional — note: logo upload not supported in this version)",
+        type: "text",
+        placeholder: "https://example.com/logo.png",
+        required: false
+      }
+    ]
+  },
+  {
+    id: "configure-authenticators",
+    name: "Configure Authenticators",
+    description: "Activates or deactivates selected authenticators in bulk. Skips authenticators that are already in the desired state.",
+    category: "Security & Policies",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "authenticators",
+        label: "Authenticators",
+        type: "select",
+        required: true,
+        multiple: true,
+        options: [
+          { value: "okta_verify", label: "Okta Verify" },
+          { value: "okta_email", label: "Okta Email" },
+          { value: "phone_number", label: "Phone (SMS / Voice)" },
+          { value: "security_question", label: "Security Question" },
+          { value: "google_otp", label: "Google Authenticator" }
+        ]
+      },
+      {
+        name: "action",
+        label: "Action",
+        type: "select",
+        required: true,
+        options: [
+          { value: "activate", label: "Activate" },
+          { value: "deactivate", label: "Deactivate" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "configure-threat-insight",
+    name: "Configure ThreatInsight",
+    description: "Displays the current ThreatInsight configuration and updates it to the selected action. Optionally excludes specific network zones from ThreatInsight evaluation.",
+    category: "Security & Policies",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "action",
+        label: "ThreatInsight Action",
+        type: "select",
+        required: true,
+        options: [
+          { value: "none", label: "None (disabled)" },
+          { value: "audit", label: "Audit (log only)" },
+          { value: "block", label: "Block (deny suspicious requests)" }
+        ]
+      },
+      {
+        name: "excludeZones",
+        label: "Excluded Zone IDs (comma-separated, optional)",
+        type: "text",
+        placeholder: "nzo1abc, nzo2def",
+        required: false
+      }
+    ]
+  },
+  {
+    id: "reset-demo-user-pool",
+    name: "Reset Demo User Pool",
+    description: "Expires passwords and/or resets MFA factors for all active users in a group, making them ready for a fresh demo run.",
+    category: "Setup & Users",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "groupName",
+        label: "Group Name (leave blank for Everyone)",
+        type: "text",
+        placeholder: "Demo Users",
+        required: false
+      },
+      {
+        name: "resetPasswords",
+        label: "Expire Passwords",
+        type: "select",
+        required: true,
+        options: [
+          { value: "yes", label: "Yes — expire passwords" },
+          { value: "no", label: "No — keep passwords" }
+        ]
+      },
+      {
+        name: "resetFactors",
+        label: "Reset MFA Factors",
+        type: "select",
+        required: true,
+        options: [
+          { value: "yes", label: "Yes — reset all enrolled factors" },
+          { value: "no", label: "No — keep enrolled factors" }
         ]
       }
     ]

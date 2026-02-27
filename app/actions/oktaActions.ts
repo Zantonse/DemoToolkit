@@ -2885,3 +2885,453 @@ export async function getSystemLogs(
   }
 }
 
+// ============================================================================
+// Configure ThreatInsight
+// ============================================================================
+
+/**
+ * Configure ThreatInsight
+ * - Displays the current configuration first
+ * - Updates the action (none / audit / block) and optional excluded zones
+ */
+export async function configureThreatInsight(
+  config: OktaConfig,
+  inputs: { action: string; excludeZones?: string },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const action = inputs.action?.trim();
+    const excludeZonesRaw = inputs.excludeZones?.trim() || '';
+    log({ level: 'info', message: 'Fetching current ThreatInsight configuration...' });
+
+    if (!action) {
+      return { success: false, message: 'Action is required (none, audit, or block).' };
+    }
+
+    // Get current config
+    const current = await oktaFetch<any>(config, '/api/v1/threats/configuration');
+    log({
+      level: 'info',
+      message: `Current config — action: ${current.action}, excludeZones: ${
+        current.excludeZones?.length ? current.excludeZones.join(', ') : 'none'
+      }`,
+    });
+
+    // Build new excluded zones list
+    const excludeZones: string[] = excludeZonesRaw
+      ? excludeZonesRaw.split(',').map((z) => z.trim()).filter(Boolean)
+      : [];
+
+    const payload = { action, excludeZones };
+
+    log({ level: 'info', message: `Updating ThreatInsight — action: ${action}, excludeZones: ${excludeZones.join(', ') || 'none'}...` });
+
+    const updated = await oktaFetch<any>(config, '/api/v1/threats/configuration', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    return {
+      success: true,
+      message: `ThreatInsight updated. Action: ${updated.action}. Excluded zones: ${
+        updated.excludeZones?.length ? updated.excludeZones.join(', ') : 'none'
+      }.`,
+      data: { before: current, after: updated },
+    };
+  } catch (err: any) {
+    console.error('configureThreatInsight error', err);
+    return {
+      success: false,
+      message: `Error configuring ThreatInsight: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Configure Authenticators (bulk activate / deactivate)
+// ============================================================================
+
+/**
+ * Configure Authenticators
+ * - For each selected authenticator key, find it in the authenticator list
+ * - Activate or deactivate it; skip if already in desired state
+ */
+export async function configureAuthenticators(
+  config: OktaConfig,
+  inputs: { authenticators: string | string[]; action: string },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const rawKeys = inputs.authenticators;
+    const action = inputs.action?.trim();
+
+    if (!rawKeys || (Array.isArray(rawKeys) && rawKeys.length === 0)) {
+      return { success: false, message: 'At least one authenticator must be selected.' };
+    }
+    if (!action || !['activate', 'deactivate'].includes(action)) {
+      return { success: false, message: 'Action must be "activate" or "deactivate".' };
+    }
+
+    const selectedKeys: string[] = Array.isArray(rawKeys)
+      ? rawKeys
+      : rawKeys.split(',').map((k) => k.trim()).filter(Boolean);
+
+    log({ level: 'info', message: `Fetching authenticator list...` });
+    const allAuthenticators = await oktaFetch<OktaAuthenticator[]>(config, '/api/v1/authenticators');
+
+    const results: { key: string; status: string; message: string }[] = [];
+    const desiredStatus = action === 'activate' ? 'ACTIVE' : 'INACTIVE';
+
+    for (const key of selectedKeys) {
+      const authenticator = allAuthenticators.find((a) => a.key === key);
+
+      if (!authenticator) {
+        log({ level: 'warn', message: `Authenticator key "${key}" not found in this org — skipping.` });
+        results.push({ key, status: 'not_found', message: `Authenticator "${key}" not found in org.` });
+        continue;
+      }
+
+      if (authenticator.status === desiredStatus) {
+        log({
+          level: 'info',
+          message: `${authenticator.name} is already ${desiredStatus} — skipping.`,
+        });
+        results.push({ key, status: 'skipped', message: `Already ${desiredStatus}.` });
+        continue;
+      }
+
+      log({ level: 'info', message: `${action === 'activate' ? 'Activating' : 'Deactivating'} ${authenticator.name}...` });
+
+      const lifecycleRes = await oktaFetch<any>(
+        config,
+        `/api/v1/authenticators/${authenticator.id}/lifecycle/${action}`,
+        { method: 'POST' }
+      );
+
+      log({ level: 'success', message: `${authenticator.name} ${action}d successfully.` });
+      results.push({ key, status: action === 'activate' ? 'activated' : 'deactivated', message: `${authenticator.name} ${action}d.` });
+      void lifecycleRes; // result not needed
+    }
+
+    const succeeded = results.filter((r) => r.status === 'activated' || r.status === 'deactivated').length;
+    const skipped = results.filter((r) => r.status === 'skipped').length;
+    const notFound = results.filter((r) => r.status === 'not_found').length;
+
+    return {
+      success: true,
+      message: `Authenticator configuration complete. ${succeeded} ${action}d, ${skipped} already in desired state, ${notFound} not found.`,
+      data: { results },
+    };
+  } catch (err: any) {
+    console.error('configureAuthenticators error', err);
+    return {
+      success: false,
+      message: `Error configuring authenticators: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Reset Demo User Pool
+// ============================================================================
+
+/**
+ * Reset Demo User Pool
+ * - Finds the target group (default: Everyone)
+ * - Loops through all active users in the group
+ * - Optionally expires their passwords and/or resets their MFA factors
+ */
+export async function resetDemoUserPool(
+  config: OktaConfig,
+  inputs?: { groupName?: string; resetPasswords?: string; resetFactors?: string },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const groupNameInput = inputs?.groupName?.trim() || '';
+    const doResetPasswords = (inputs?.resetPasswords ?? 'yes') !== 'no';
+    const doResetFactors = (inputs?.resetFactors ?? 'yes') !== 'no';
+
+    if (!doResetPasswords && !doResetFactors) {
+      return { success: false, message: 'At least one of "Expire Passwords" or "Reset MFA Factors" must be enabled.' };
+    }
+
+    // Find the target group
+    let groupId: string;
+    let groupLabel: string;
+
+    if (groupNameInput) {
+      log({ level: 'info', message: `Searching for group "${groupNameInput}"...` });
+      const searchParam = encodeURIComponent(`profile.name eq "${groupNameInput}"`);
+      const groups = await oktaFetch<any[]>(config, `/api/v1/groups?search=${searchParam}`);
+      if (groups.length === 0) {
+        return { success: false, message: `Group "${groupNameInput}" not found.` };
+      }
+      groupId = groups[0].id;
+      groupLabel = groups[0].profile?.name ?? groupNameInput;
+    } else {
+      log({ level: 'info', message: 'No group specified — looking up the Everyone group...' });
+      const everyoneGroups = await oktaFetch<any[]>(config, '/api/v1/groups?q=Everyone&limit=1');
+      const everyoneGroup = everyoneGroups.find(
+        (g: any) => g.type === 'BUILT_IN' || g.profile?.name === 'Everyone'
+      ) ?? everyoneGroups[0];
+      if (!everyoneGroup) {
+        return { success: false, message: 'Could not find the Everyone group.' };
+      }
+      groupId = everyoneGroup.id;
+      groupLabel = everyoneGroup.profile?.name ?? 'Everyone';
+    }
+
+    log({ level: 'info', message: `Fetching users in group "${groupLabel}"...` });
+    const users = await oktaFetch<any[]>(config, `/api/v1/groups/${groupId}/users?limit=200`);
+
+    const activeUsers = users.filter((u: any) => u.status !== 'DEPROVISIONED' && u.status !== 'SUSPENDED');
+    log({ level: 'info', message: `Found ${activeUsers.length} active user(s) to process.` });
+
+    if (activeUsers.length === 0) {
+      return { success: true, message: `No active users found in group "${groupLabel}".`, data: { processed: 0 } };
+    }
+
+    let passwordsExpired = 0;
+    let factorsReset = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < activeUsers.length; i++) {
+      const user = activeUsers[i];
+      const userId: string = user.id;
+      const userLabel = user.profile?.login ?? user.profile?.email ?? userId;
+      log({ level: 'info', message: `[${i + 1}/${activeUsers.length}] Processing ${userLabel}...` });
+
+      if (doResetPasswords) {
+        try {
+          await oktaFetch<any>(config, `/api/v1/users/${userId}/lifecycle/expire_password`, {
+            method: 'POST',
+          });
+          passwordsExpired++;
+        } catch (e: any) {
+          errors.push(`expire_password for ${userLabel}: ${e.message}`);
+        }
+      }
+
+      if (doResetFactors) {
+        try {
+          await oktaFetch<any>(config, `/api/v1/users/${userId}/lifecycle/reset_factors`, {
+            method: 'POST',
+          });
+          factorsReset++;
+        } catch (e: any) {
+          errors.push(`reset_factors for ${userLabel}: ${e.message}`);
+        }
+      }
+    }
+
+    const parts: string[] = [];
+    if (doResetPasswords) parts.push(`${passwordsExpired} password(s) expired`);
+    if (doResetFactors) parts.push(`${factorsReset} factor enrollment(s) reset`);
+    const summary = parts.join(', ');
+
+    return {
+      success: errors.length === 0,
+      message: errors.length === 0
+        ? `Demo user pool reset for group "${groupLabel}": ${summary}.`
+        : `Completed with ${errors.length} error(s): ${summary}. Errors: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? '...' : ''}`,
+      data: { processed: activeUsers.length, passwordsExpired, factorsReset, errors },
+    };
+  } catch (err: any) {
+    console.error('resetDemoUserPool error', err);
+    return {
+      success: false,
+      message: `Error resetting demo user pool: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Add Google Social IdP
+// ============================================================================
+
+/**
+ * Add Google as a Social Identity Provider
+ * - Checks for an existing Google IdP first
+ * - If active, returns success immediately
+ * - If inactive, activates it
+ * - If absent, creates and activates it
+ */
+export async function addGoogleSocialIdp(
+  config: OktaConfig,
+  inputs: { clientId: string; clientSecret: string },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const clientId = inputs.clientId?.trim();
+    const clientSecret = inputs.clientSecret?.trim();
+
+    if (!clientId) return { success: false, message: 'Google Client ID is required.' };
+    if (!clientSecret) return { success: false, message: 'Google Client Secret is required.' };
+
+    log({ level: 'info', message: 'Checking for existing Google Social IdP...' });
+    const existingIdps = await oktaFetch<any[]>(config, '/api/v1/idps?type=GOOGLE');
+
+    if (existingIdps.length > 0) {
+      const existing = existingIdps[0];
+      if (existing.status === 'ACTIVE') {
+        return {
+          success: true,
+          message: `Google Social IdP "${existing.name}" already exists and is active (ID: ${existing.id}).`,
+          data: existing,
+        };
+      }
+
+      // IdP exists but is inactive — activate it
+      log({ level: 'info', message: `Found inactive Google IdP "${existing.name}" — activating...` });
+      const activated = await oktaFetch<any>(
+        config,
+        `/api/v1/idps/${existing.id}/lifecycle/activate`,
+        { method: 'POST' }
+      );
+      return {
+        success: true,
+        message: `Google Social IdP "${existing.name}" activated (ID: ${existing.id}).`,
+        data: activated,
+      };
+    }
+
+    // No existing Google IdP — create one
+    log({ level: 'info', message: 'Creating Google Social IdP...' });
+    const idpPayload = {
+      type: 'GOOGLE',
+      name: 'Google',
+      protocol: {
+        type: 'OIDC',
+        scopes: ['profile', 'email', 'openid'],
+        credentials: {
+          client: { client_id: clientId, client_secret: clientSecret },
+        },
+      },
+      policy: {
+        provisioning: {
+          action: 'AUTO',
+          profileMaster: false,
+          groups: { action: 'NONE' },
+        },
+        accountLink: { action: 'AUTO' },
+        subject: {
+          userNameTemplate: { template: 'idpuser.email' },
+          matchType: 'USERNAME',
+        },
+      },
+    };
+
+    const created = await oktaFetch<any>(config, '/api/v1/idps', {
+      method: 'POST',
+      body: JSON.stringify(idpPayload),
+    });
+
+    log({ level: 'success', message: `Google IdP created (ID: ${created.id}) — activating...` });
+
+    await oktaFetch<any>(config, `/api/v1/idps/${created.id}/lifecycle/activate`, {
+      method: 'POST',
+    });
+
+    return {
+      success: true,
+      message: `Google Social IdP created and activated (ID: ${created.id}).`,
+      data: created,
+    };
+  } catch (err: any) {
+    console.error('addGoogleSocialIdp error', err);
+    return {
+      success: false,
+      message: `Error adding Google Social IdP: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Apply Customer Branding
+// ============================================================================
+
+/**
+ * Apply Customer Branding
+ * - Fetches the default brand and its theme
+ * - Updates primary and secondary colors
+ * - Notes that logo upload requires a separate multipart POST
+ */
+export async function applyCustomerBranding(
+  config: OktaConfig,
+  inputs: { primaryColor: string; secondaryColor?: string; logoUrl?: string },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const primaryColor = inputs.primaryColor?.trim();
+    const secondaryColor = inputs.secondaryColor?.trim() || '#EB5757';
+    const logoUrl = inputs.logoUrl?.trim();
+
+    if (!primaryColor) {
+      return { success: false, message: 'Primary color is required.' };
+    }
+    // Validate hex format
+    if (!/^#[0-9A-Fa-f]{6}$/.test(primaryColor)) {
+      return { success: false, message: 'Primary color must be a valid hex code (e.g. #1662DD).' };
+    }
+    if (secondaryColor && !/^#[0-9A-Fa-f]{6}$/.test(secondaryColor)) {
+      return { success: false, message: 'Secondary color must be a valid hex code (e.g. #EB5757).' };
+    }
+
+    // Step 1: Get brands
+    log({ level: 'info', message: 'Fetching default brand...' });
+    const brands = await oktaFetch<any[]>(config, '/api/v1/brands');
+    if (!brands || brands.length === 0) {
+      return { success: false, message: 'No brands found. The Brands API may not be available in this org.' };
+    }
+    const brand = brands[0];
+    log({ level: 'info', message: `Using brand: ${brand.name ?? brand.id}` });
+
+    // Step 2: Get themes for the brand
+    log({ level: 'info', message: 'Fetching brand themes...' });
+    const themes = await oktaFetch<any[]>(config, `/api/v1/brands/${brand.id}/themes`);
+    if (!themes || themes.length === 0) {
+      return { success: false, message: `No themes found for brand "${brand.name ?? brand.id}".` };
+    }
+    const theme = themes[0];
+    log({
+      level: 'info',
+      message: `Current theme colors — primary: ${theme.primaryColorHex ?? 'n/a'}, secondary: ${theme.secondaryColorHex ?? 'n/a'}`,
+    });
+
+    // Step 3: Update theme colors
+    log({ level: 'info', message: `Applying colors — primary: ${primaryColor}, secondary: ${secondaryColor}...` });
+    const themePayload = {
+      primaryColorHex: primaryColor,
+      primaryColorContrastHex: '#ffffff',
+      secondaryColorHex: secondaryColor,
+      secondaryColorContrastHex: '#ffffff',
+      signInPageTouchPointVariant: 'BACKGROUND_SECONDARY_COLOR',
+      endUserDashboardTouchPointVariant: 'LOGO_ON_FULL_WHITE',
+      errorPageTouchPointVariant: 'BACKGROUND_SECONDARY_COLOR',
+      emailTemplateTouchPointVariant: 'FULL_THEME',
+    };
+
+    const updated = await oktaFetch<any>(
+      config,
+      `/api/v1/brands/${brand.id}/themes/${theme.id}`,
+      { method: 'PUT', body: JSON.stringify(themePayload) }
+    );
+
+    const logoNote = logoUrl
+      ? ` Logo URL noted (${logoUrl}), but logo upload requires a multipart POST and is not implemented in this version.`
+      : '';
+
+    return {
+      success: true,
+      message: `Branding applied — primary: ${updated.primaryColorHex}, secondary: ${updated.secondaryColorHex}.${logoNote}`,
+      data: { brand, before: theme, after: updated },
+    };
+  } catch (err: any) {
+    console.error('applyCustomerBranding error', err);
+    return {
+      success: false,
+      message: `Error applying customer branding: ${err.message ?? String(err)}`,
+    };
+  }
+}
+

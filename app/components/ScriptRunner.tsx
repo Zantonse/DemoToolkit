@@ -41,6 +41,7 @@ const categoryOrder: CategoryType[] = [
   'Security & Policies',
   'Applications',
   'Governance',
+  'Customization',
   'Tools',
 ];
 

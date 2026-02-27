@@ -30,6 +30,11 @@ import {
   createAuthServer,
   addCustomClaim,
   addCustomScope,
+  addGoogleSocialIdp,
+  applyCustomerBranding,
+  configureAuthenticators,
+  configureThreatInsight,
+  resetDemoUserPool,
 } from '../app/actions/oktaActions';
 
 export type HandlerFn = (
@@ -107,6 +112,33 @@ const handlers: Record<string, HandlerFn> = {
       scopeName: inputs?.scopeName as string | undefined,
       description: inputs?.description as string | undefined,
       consent: inputs?.consent as string | undefined,
+    }, log),
+  'add-google-social-idp': (config, inputs, log) =>
+    addGoogleSocialIdp(config, {
+      clientId: (inputs?.clientId as string) || '',
+      clientSecret: (inputs?.clientSecret as string) || '',
+    }, log),
+  'apply-customer-branding': (config, inputs, log) =>
+    applyCustomerBranding(config, {
+      primaryColor: (inputs?.primaryColor as string) || '',
+      secondaryColor: inputs?.secondaryColor as string | undefined,
+      logoUrl: inputs?.logoUrl as string | undefined,
+    }, log),
+  'configure-authenticators': (config, inputs, log) =>
+    configureAuthenticators(config, {
+      authenticators: (inputs?.authenticators as string | string[]) || [],
+      action: (inputs?.action as string) || 'activate',
+    }, log),
+  'configure-threat-insight': (config, inputs, log) =>
+    configureThreatInsight(config, {
+      action: (inputs?.action as string) || 'audit',
+      excludeZones: inputs?.excludeZones as string | undefined,
+    }, log),
+  'reset-demo-user-pool': (config, inputs, log) =>
+    resetDemoUserPool(config, {
+      groupName: inputs?.groupName as string | undefined,
+      resetPasswords: inputs?.resetPasswords as string | undefined,
+      resetFactors: inputs?.resetFactors as string | undefined,
     }, log),
 };
 
