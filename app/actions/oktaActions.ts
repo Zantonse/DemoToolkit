@@ -3335,3 +3335,592 @@ export async function applyCustomerBranding(
   }
 }
 
+// ============================================================================
+// Create Authentication Policy
+// ============================================================================
+
+/**
+ * Create an App Sign-On (ACCESS_POLICY) with a preset rule and assign to app.
+ * Presets:
+ *   - phishing-resistant: 2FA with phishingResistant constraint
+ *   - passwordless: 1FA with deviceBound REQUIRED
+ *   - step-up-new-device: 2FA with New Device behavior condition
+ */
+export async function createAuthenticationPolicy(
+  config: OktaConfig,
+  inputs: { name: string; preset: string; appInstance: string },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const name = inputs.name?.trim();
+    const preset = inputs.preset?.trim() || 'phishing-resistant';
+    const appId = inputs.appInstance?.trim();
+
+    if (!name) {
+      return { success: false, message: 'Policy name is required.' };
+    }
+    if (!appId) {
+      return { success: false, message: 'Application selection is required.' };
+    }
+
+    log({ level: 'info', message: `Creating authentication policy "${name}" with preset "${preset}"...` });
+
+    // Step 1: Create the ACCESS_POLICY
+    const policy = await oktaFetch<any>(config, '/api/v1/policies', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        type: 'ACCESS_POLICY',
+        status: 'ACTIVE',
+        description: `Authentication policy created by Okta SE Toolkit — preset: ${preset}`,
+      }),
+    });
+
+    log({ level: 'success', message: `Policy created (ID: ${policy.id}).` });
+
+    // Step 2: Build rule based on preset
+    let verificationMethod: Record<string, unknown>;
+    let ruleConditions: Record<string, unknown> | undefined;
+
+    if (preset === 'phishing-resistant') {
+      verificationMethod = {
+        type: 'ASSURANCE',
+        factorMode: '2FA',
+        constraints: [
+          { possession: { phishingResistant: true } },
+        ],
+      };
+    } else if (preset === 'passwordless') {
+      verificationMethod = {
+        type: 'ASSURANCE',
+        factorMode: '1FA',
+        constraints: [
+          { possession: { deviceBound: 'REQUIRED' } },
+        ],
+      };
+    } else {
+      // step-up-new-device
+      verificationMethod = {
+        type: 'ASSURANCE',
+        factorMode: '2FA',
+        constraints: [{}],
+      };
+      ruleConditions = {
+        elCondition: {
+          condition: 'security.behaviors.contains("New Device")',
+        },
+      };
+    }
+
+    const rulePayload: Record<string, unknown> = {
+      name: `${name} — Rule`,
+      type: 'ASSURANCE',
+      priority: 1,
+      actions: {
+        appSignOn: {
+          access: 'ALLOW',
+          verificationMethod,
+        },
+      },
+    };
+
+    if (ruleConditions) {
+      rulePayload.conditions = ruleConditions;
+    }
+
+    log({ level: 'info', message: 'Creating policy rule...' });
+    const rule = await oktaFetch<any>(
+      config,
+      `/api/v1/policies/${policy.id}/rules`,
+      { method: 'POST', body: JSON.stringify(rulePayload) }
+    );
+
+    log({ level: 'success', message: `Policy rule created (ID: ${rule.id}).` });
+
+    // Step 3: Assign policy to the selected app
+    log({ level: 'info', message: `Assigning policy to app (ID: ${appId})...` });
+    await oktaFetch<any>(
+      config,
+      `/api/v1/apps/${appId}/policies/${policy.id}`,
+      { method: 'PUT', body: JSON.stringify({}) }
+    );
+
+    log({ level: 'success', message: `Policy assigned to application successfully.` });
+
+    return {
+      success: true,
+      message: `Authentication policy "${name}" created with "${preset}" preset and assigned to app (ID: ${appId}).`,
+      data: { policy, rule },
+    };
+  } catch (err: any) {
+    console.error('createAuthenticationPolicy error', err);
+    return {
+      success: false,
+      message: `Error creating authentication policy: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Setup Behavior Detection
+// ============================================================================
+
+/**
+ * Create and activate the four standard Okta behavior detection rules.
+ * Skips any behavior type that already exists.
+ */
+export async function setupBehaviorDetection(
+  config: OktaConfig,
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    log({ level: 'info', message: 'Fetching existing behavior detection rules...' });
+
+    const existing = await oktaFetch<any[]>(config, '/api/v1/behaviors');
+    const existingTypes = new Set(existing.map((b: any) => b.type));
+
+    const behaviorsToCreate = [
+      {
+        name: 'Velocity',
+        type: 'VELOCITY',
+        settings: { velocityKph: 805 },
+      },
+      {
+        name: 'New Device',
+        type: 'NEW_DEVICE',
+        settings: { maxEventsUsedForEvaluation: 20 },
+      },
+      {
+        name: 'New Geo-Location',
+        type: 'NEW_GEO_LOCATION',
+        settings: { maxEventsUsedForEvaluation: 20 },
+      },
+      {
+        name: 'New IP',
+        type: 'NEW_IP',
+        settings: { maxEventsUsedForEvaluation: 20 },
+      },
+    ];
+
+    const created: string[] = [];
+    const skipped: string[] = [];
+
+    for (const behaviorDef of behaviorsToCreate) {
+      if (existingTypes.has(behaviorDef.type)) {
+        log({ level: 'info', message: `Behavior type "${behaviorDef.type}" already exists — skipping.` });
+        skipped.push(behaviorDef.name);
+        continue;
+      }
+
+      log({ level: 'info', message: `Creating behavior: ${behaviorDef.name} (${behaviorDef.type})...` });
+
+      const behavior = await oktaFetch<any>(config, '/api/v1/behaviors', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: behaviorDef.name,
+          type: behaviorDef.type,
+          settings: behaviorDef.settings,
+        }),
+      });
+
+      log({ level: 'info', message: `Activating behavior: ${behaviorDef.name}...` });
+      await oktaFetch<any>(
+        config,
+        `/api/v1/behaviors/${behavior.id}/lifecycle/activate`,
+        { method: 'POST' }
+      );
+
+      log({ level: 'success', message: `Behavior "${behaviorDef.name}" created and activated.` });
+      created.push(behaviorDef.name);
+    }
+
+    const parts: string[] = [];
+    if (created.length > 0) parts.push(`Created and activated: ${created.join(', ')}`);
+    if (skipped.length > 0) parts.push(`Already existed (skipped): ${skipped.join(', ')}`);
+
+    return {
+      success: true,
+      message: `Behavior detection setup complete. ${parts.join('. ')}.`,
+      data: { created, skipped },
+    };
+  } catch (err: any) {
+    console.error('setupBehaviorDetection error', err);
+    return {
+      success: false,
+      message: `Error setting up behavior detection: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Create Password Policy
+// ============================================================================
+
+/**
+ * Create a Password Policy based on a compliance preset and optionally
+ * target a specific group.
+ * Presets: nist | pci | strict
+ */
+export async function createPasswordPolicy(
+  config: OktaConfig,
+  inputs: { name: string; preset: string; groupName?: string },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const name = inputs.name?.trim();
+    const preset = inputs.preset?.trim() || 'nist';
+    const groupNameInput = inputs.groupName?.trim() || '';
+
+    if (!name) {
+      return { success: false, message: 'Policy name is required.' };
+    }
+
+    log({ level: 'info', message: `Creating "${preset}" password policy "${name}"...` });
+
+    // Build policy settings based on preset
+    let complexity: Record<string, unknown>;
+    let age: Record<string, unknown>;
+    let lockout: Record<string, unknown>;
+
+    if (preset === 'nist') {
+      complexity = {
+        minLength: 8,
+        minLowerCase: 0,
+        minUpperCase: 0,
+        minNumber: 0,
+        minSymbol: 0,
+        excludeUsername: true,
+        excludeAttributes: [],
+        dictionary: { common: { exclude: true } },
+      };
+      age = { maxAgeDays: 0, expireWarnDays: 0, minAgeMinutes: 0, historyCount: 0 };
+      lockout = { maxAttempts: 10, autoUnlockMinutes: 0, showLockoutFailures: false };
+    } else if (preset === 'pci') {
+      complexity = {
+        minLength: 12,
+        minLowerCase: 1,
+        minUpperCase: 1,
+        minNumber: 1,
+        minSymbol: 1,
+        excludeUsername: true,
+        excludeAttributes: [],
+        dictionary: { common: { exclude: true } },
+      };
+      age = { maxAgeDays: 90, expireWarnDays: 7, minAgeMinutes: 0, historyCount: 5 };
+      lockout = { maxAttempts: 6, autoUnlockMinutes: 30, showLockoutFailures: false };
+    } else {
+      // strict
+      complexity = {
+        minLength: 16,
+        minLowerCase: 1,
+        minUpperCase: 1,
+        minNumber: 1,
+        minSymbol: 1,
+        excludeUsername: true,
+        excludeAttributes: [],
+        dictionary: { common: { exclude: true } },
+      };
+      age = { maxAgeDays: 0, expireWarnDays: 0, minAgeMinutes: 0, historyCount: 10 };
+      lockout = { maxAttempts: 5, autoUnlockMinutes: 60, showLockoutFailures: false };
+    }
+
+    // Step 1: Create the PASSWORD policy
+    const policy = await oktaFetch<any>(config, '/api/v1/policies', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        type: 'PASSWORD',
+        status: 'ACTIVE',
+        description: `Password policy (${preset} preset) created by Okta SE Toolkit.`,
+        settings: {
+          password: { complexity, age, lockout },
+          recovery: {
+            factors: {
+              recovery_question: { status: 'ACTIVE', properties: { complexity: { minLength: 4 } } },
+              okta_email: { status: 'ACTIVE', properties: { recoveryToken: { tokenLifetimeMinutes: 60 } } },
+            },
+          },
+          delegation: { options: { skipUnlockAccount: false } },
+        },
+      }),
+    });
+
+    log({ level: 'success', message: `Password policy created (ID: ${policy.id}).` });
+
+    // Step 2: Resolve group if provided, else use EVERYONE
+    let groupId: string | undefined;
+    let groupLabel: string = 'Everyone';
+
+    if (groupNameInput) {
+      log({ level: 'info', message: `Looking up group "${groupNameInput}"...` });
+      const searchParam = encodeURIComponent(`profile.name eq "${groupNameInput}"`);
+      const groups = await oktaFetch<any[]>(config, `/api/v1/groups?search=${searchParam}`);
+      if (groups.length === 0) {
+        log({ level: 'warn', message: `Group "${groupNameInput}" not found — rule will apply to everyone.` });
+      } else {
+        groupId = groups[0].id;
+        groupLabel = groups[0].profile?.name ?? groupNameInput;
+        log({ level: 'info', message: `Group found: "${groupLabel}" (ID: ${groupId}).` });
+      }
+    }
+
+    // Step 3: Create policy rule
+    log({ level: 'info', message: 'Creating policy rule...' });
+    const rulePayload: Record<string, unknown> = {
+      name: 'Default Rule',
+      type: 'PASSWORD',
+      priority: 1,
+      conditions: {
+        people: {
+          users: { exclude: [] },
+          groups: groupId ? { include: [groupId], exclude: [] } : { include: [], exclude: [] },
+        },
+        network: { connection: 'ANYWHERE' },
+      },
+      actions: {
+        passwordChange: { access: 'ALLOW' },
+        selfServicePasswordReset: { access: 'ALLOW' },
+        selfServiceUnlock: { access: 'DENY' },
+      },
+    };
+
+    const rule = await oktaFetch<any>(
+      config,
+      `/api/v1/policies/${policy.id}/rules`,
+      { method: 'POST', body: JSON.stringify(rulePayload) }
+    );
+
+    log({ level: 'success', message: `Policy rule created (ID: ${rule.id}).` });
+
+    return {
+      success: true,
+      message: `Password policy "${name}" (${preset} preset) created and targeting "${groupLabel}" (Policy ID: ${policy.id}).`,
+      data: { policy, rule },
+    };
+  } catch (err: any) {
+    console.error('createPasswordPolicy error', err);
+    return {
+      success: false,
+      message: `Error creating password policy: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Create Authenticator Enrollment Policy
+// ============================================================================
+
+/**
+ * Create an MFA_ENROLL policy with required and optional authenticators.
+ * All authenticators not listed default to DISABLED.
+ */
+export async function createEnrollmentPolicy(
+  config: OktaConfig,
+  inputs: {
+    name: string;
+    requiredAuthenticators: string | string[];
+    optionalAuthenticators?: string | string[];
+  },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const name = inputs.name?.trim();
+
+    if (!name) {
+      return { success: false, message: 'Policy name is required.' };
+    }
+
+    // Normalize authenticator lists to arrays
+    const requiredRaw = inputs.requiredAuthenticators;
+    const optionalRaw = inputs.optionalAuthenticators;
+
+    const requiredList: string[] = Array.isArray(requiredRaw)
+      ? requiredRaw
+      : typeof requiredRaw === 'string' && requiredRaw
+      ? requiredRaw.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    const optionalList: string[] = Array.isArray(optionalRaw)
+      ? optionalRaw
+      : typeof optionalRaw === 'string' && optionalRaw
+      ? optionalRaw.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    if (requiredList.length === 0) {
+      return { success: false, message: 'At least one required authenticator must be selected.' };
+    }
+
+    log({ level: 'info', message: `Creating enrollment policy "${name}"...` });
+    log({ level: 'info', message: `Required: [${requiredList.join(', ')}]  Optional: [${optionalList.join(', ')}]` });
+
+    // Build authenticators array
+    const allKnownKeys = ['okta_email', 'okta_verify', 'phone_number', 'webauthn', 'security_question', 'google_otp'];
+    const authenticators: Array<{ key: string; enroll: { self: string } }> = [];
+
+    for (const key of allKnownKeys) {
+      let selfEnroll = 'NOT_ALLOWED';
+      if (requiredList.includes(key)) {
+        selfEnroll = 'REQUIRED';
+      } else if (optionalList.includes(key)) {
+        selfEnroll = 'OPTIONAL';
+      }
+      authenticators.push({ key, enroll: { self: selfEnroll } });
+    }
+
+    // Step 1: Create MFA_ENROLL policy
+    const policy = await oktaFetch<any>(config, '/api/v1/policies', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        type: 'MFA_ENROLL',
+        status: 'ACTIVE',
+        description: `Authenticator enrollment policy created by Okta SE Toolkit.`,
+        settings: {
+          type: 'AUTHENTICATORS',
+          authenticators,
+        },
+      }),
+    });
+
+    log({ level: 'success', message: `Enrollment policy created (ID: ${policy.id}).` });
+
+    // Step 2: Create default rule targeting everyone
+    log({ level: 'info', message: 'Creating enrollment policy rule for everyone...' });
+    const rule = await oktaFetch<any>(
+      config,
+      `/api/v1/policies/${policy.id}/rules`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Catch-all Rule',
+          type: 'MFA_ENROLL',
+          priority: 99,
+          actions: {
+            enroll: { self: 'CHALLENGE' },
+          },
+          conditions: {
+            people: {
+              users: { exclude: [] },
+            },
+            network: { connection: 'ANYWHERE' },
+          },
+        }),
+      }
+    );
+
+    log({ level: 'success', message: `Enrollment rule created (ID: ${rule.id}).` });
+
+    return {
+      success: true,
+      message: `Enrollment policy "${name}" created with ${requiredList.length} required and ${optionalList.length} optional authenticator(s) (Policy ID: ${policy.id}).`,
+      data: { policy, rule },
+    };
+  } catch (err: any) {
+    console.error('createEnrollmentPolicy error', err);
+    return {
+      success: false,
+      message: `Error creating enrollment policy: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Enable Self-Service Registration
+// ============================================================================
+
+/**
+ * Create a PROFILE_ENROLLMENT policy with self-registration enabled
+ * and assign it to the selected application.
+ */
+export async function enableSelfServiceRegistration(
+  config: OktaConfig,
+  inputs: { appInstance: string; requireEmailVerification: string },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const appId = inputs.appInstance?.trim();
+    const requireVerification = (inputs.requireEmailVerification ?? 'yes') !== 'no';
+
+    if (!appId) {
+      return { success: false, message: 'Application selection is required.' };
+    }
+
+    log({ level: 'info', message: `Creating self-service registration policy (email verification: ${requireVerification ? 'on' : 'off'})...` });
+
+    // Step 1: Create PROFILE_ENROLLMENT policy
+    const policy = await oktaFetch<any>(config, '/api/v1/policies', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Self-Service Registration',
+        type: 'PROFILE_ENROLLMENT',
+        status: 'ACTIVE',
+        description: 'Profile enrollment policy with self-registration created by Okta SE Toolkit.',
+        settings: {
+          unknownUserAction: 'REGISTER',
+          activationRequirements: {
+            emailVerification: requireVerification,
+          },
+          profileAttributes: [
+            { name: 'email', label: 'Email', required: true },
+            { name: 'firstName', label: 'First name', required: true },
+            { name: 'lastName', label: 'Last name', required: true },
+          ],
+        },
+      }),
+    });
+
+    log({ level: 'success', message: `Profile enrollment policy created (ID: ${policy.id}).` });
+
+    // Step 2: Create default rule
+    log({ level: 'info', message: 'Creating enrollment rule...' });
+    const rule = await oktaFetch<any>(
+      config,
+      `/api/v1/policies/${policy.id}/rules`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Default Rule',
+          type: 'PROFILE_ENROLLMENT',
+          priority: 1,
+          actions: {
+            profileEnrollment: {
+              access: 'ALLOW',
+              unknownUserAction: 'REGISTER',
+              activationRequirements: { emailVerification: requireVerification },
+              profileAttributes: [
+                { name: 'email', label: 'Email', required: true },
+                { name: 'firstName', label: 'First name', required: true },
+                { name: 'lastName', label: 'Last name', required: true },
+              ],
+            },
+          },
+        }),
+      }
+    );
+
+    log({ level: 'success', message: `Enrollment rule created (ID: ${rule.id}).` });
+
+    // Step 3: Assign policy to the selected app
+    log({ level: 'info', message: `Assigning policy to app (ID: ${appId})...` });
+    await oktaFetch<any>(
+      config,
+      `/api/v1/apps/${appId}/policies/${policy.id}`,
+      { method: 'PUT', body: JSON.stringify({}) }
+    );
+
+    log({ level: 'success', message: `Self-service registration policy assigned to application.` });
+
+    return {
+      success: true,
+      message: `Self-service registration enabled (Policy ID: ${policy.id}). Email verification is ${requireVerification ? 'required' : 'disabled'}. Policy assigned to app (ID: ${appId}).`,
+      data: { policy, rule },
+    };
+  } catch (err: any) {
+    console.error('enableSelfServiceRegistration error', err);
+    return {
+      success: false,
+      message: `Error enabling self-service registration: ${err.message ?? String(err)}`,
+    };
+  }
+}
+

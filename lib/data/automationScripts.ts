@@ -41,6 +41,11 @@ export const SCRIPT_IDS = [
   'configure-authenticators',
   'configure-threat-insight',
   'reset-demo-user-pool',
+  'create-authentication-policy',
+  'setup-behavior-detection',
+  'create-password-policy',
+  'create-enrollment-policy',
+  'enable-self-service-registration',
 ] as const;
 
 /**
@@ -581,6 +586,152 @@ export const automationScripts: AutomationScript[] = [
         options: [
           { value: "yes", label: "Yes — reset all enrolled factors" },
           { value: "no", label: "No — keep enrolled factors" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "create-authentication-policy",
+    name: "Create Authentication Policy",
+    description: "Creates an app sign-on (ACCESS_POLICY) with a preset rule (phishing-resistant, passwordless, or step-up on new device) and assigns it to a selected application. Requires Okta Identity Engine (OIE).",
+    category: "Security & Policies",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "name",
+        label: "Policy Name",
+        type: "text",
+        placeholder: "Phishing Resistant MFA",
+        required: true
+      },
+      {
+        name: "preset",
+        label: "Policy Preset",
+        type: "select",
+        required: true,
+        options: [
+          { value: "phishing-resistant", label: "Phishing-Resistant MFA (hardware key / passkey)" },
+          { value: "passwordless", label: "Passwordless (device-bound possession factor)" },
+          { value: "step-up-new-device", label: "Step-Up on New Device (2FA required for new devices)" }
+        ]
+      },
+      {
+        name: "appInstance",
+        label: "Assign to Application",
+        type: "select",
+        required: true,
+        dynamicOptions: true,
+        placeholder: "Choose an application..."
+      }
+    ]
+  },
+  {
+    id: "setup-behavior-detection",
+    name: "Setup Behavior Detection",
+    description: "Creates and activates the four standard Okta behavior detection rules: Velocity, New Device, New Geo-Location, and New IP. Skips any that already exist. Requires Okta Identity Engine (OIE).",
+    category: "Security & Policies"
+  },
+  {
+    id: "create-password-policy",
+    name: "Create Password Policy",
+    description: "Creates a Password Policy based on a compliance preset (NIST 800-63, PCI-DSS, or Strict) and optionally targets a specific group.",
+    category: "Security & Policies",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "name",
+        label: "Policy Name",
+        type: "text",
+        placeholder: "NIST 800-63 Password Policy",
+        required: true
+      },
+      {
+        name: "preset",
+        label: "Compliance Preset",
+        type: "select",
+        required: true,
+        options: [
+          { value: "nist", label: "NIST 800-63 (min 8 chars, no forced rotation, dictionary check)" },
+          { value: "pci", label: "PCI-DSS (min 12 chars, 90-day rotation, history, complexity)" },
+          { value: "strict", label: "Strict (min 16 chars, no rotation, history 10, lockout after 5)" }
+        ]
+      },
+      {
+        name: "groupName",
+        label: "Target Group Name (optional — leave blank for Everyone)",
+        type: "text",
+        placeholder: "Everyone",
+        required: false
+      }
+    ]
+  },
+  {
+    id: "create-enrollment-policy",
+    name: "Create Authenticator Enrollment Policy",
+    description: "Creates an MFA enrollment (MFA_ENROLL) policy that sets required and optional authenticators, then applies it to everyone. Requires Okta Identity Engine (OIE).",
+    category: "Security & Policies",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "name",
+        label: "Policy Name",
+        type: "text",
+        placeholder: "Standard MFA Enrollment",
+        required: true
+      },
+      {
+        name: "requiredAuthenticators",
+        label: "Required Authenticators",
+        type: "select",
+        required: true,
+        multiple: true,
+        options: [
+          { value: "okta_email", label: "Okta Email" },
+          { value: "okta_verify", label: "Okta Verify" },
+          { value: "phone_number", label: "Phone (SMS / Voice)" },
+          { value: "webauthn", label: "WebAuthn (FIDO2)" }
+        ]
+      },
+      {
+        name: "optionalAuthenticators",
+        label: "Optional Authenticators",
+        type: "select",
+        required: false,
+        multiple: true,
+        options: [
+          { value: "okta_email", label: "Okta Email" },
+          { value: "okta_verify", label: "Okta Verify" },
+          { value: "phone_number", label: "Phone (SMS / Voice)" },
+          { value: "webauthn", label: "WebAuthn (FIDO2)" },
+          { value: "security_question", label: "Security Question" },
+          { value: "google_otp", label: "Google Authenticator" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "enable-self-service-registration",
+    name: "Enable Self-Service Registration",
+    description: "Creates a Profile Enrollment policy with self-registration enabled (email, firstName, lastName attributes) and assigns it to a selected application. Optionally requires email verification. Requires Okta Identity Engine (OIE).",
+    category: "Security & Policies",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "appInstance",
+        label: "Assign to Application",
+        type: "select",
+        required: true,
+        dynamicOptions: true,
+        placeholder: "Choose an application..."
+      },
+      {
+        name: "requireEmailVerification",
+        label: "Require Email Verification",
+        type: "select",
+        required: true,
+        options: [
+          { value: "yes", label: "Yes — require email verification" },
+          { value: "no", label: "No — skip email verification" }
         ]
       }
     ]

@@ -35,6 +35,11 @@ import {
   configureAuthenticators,
   configureThreatInsight,
   resetDemoUserPool,
+  createAuthenticationPolicy,
+  setupBehaviorDetection,
+  createPasswordPolicy,
+  createEnrollmentPolicy,
+  enableSelfServiceRegistration,
 } from '../app/actions/oktaActions';
 
 export type HandlerFn = (
@@ -139,6 +144,30 @@ const handlers: Record<string, HandlerFn> = {
       groupName: inputs?.groupName as string | undefined,
       resetPasswords: inputs?.resetPasswords as string | undefined,
       resetFactors: inputs?.resetFactors as string | undefined,
+    }, log),
+  'create-authentication-policy': (config, inputs, log) =>
+    createAuthenticationPolicy(config, {
+      name: (inputs?.name as string) || '',
+      preset: (inputs?.preset as string) || 'phishing-resistant',
+      appInstance: (inputs?.appInstance as string) || '',
+    }, log),
+  'setup-behavior-detection': (config, _inputs, log) => setupBehaviorDetection(config, log),
+  'create-password-policy': (config, inputs, log) =>
+    createPasswordPolicy(config, {
+      name: (inputs?.name as string) || '',
+      preset: (inputs?.preset as string) || 'nist',
+      groupName: inputs?.groupName as string | undefined,
+    }, log),
+  'create-enrollment-policy': (config, inputs, log) =>
+    createEnrollmentPolicy(config, {
+      name: (inputs?.name as string) || '',
+      requiredAuthenticators: (inputs?.requiredAuthenticators as string | string[]) || [],
+      optionalAuthenticators: inputs?.optionalAuthenticators as string | string[] | undefined,
+    }, log),
+  'enable-self-service-registration': (config, inputs, log) =>
+    enableSelfServiceRegistration(config, {
+      appInstance: (inputs?.appInstance as string) || '',
+      requireEmailVerification: (inputs?.requireEmailVerification as string) || 'yes',
     }, log),
 };
 
