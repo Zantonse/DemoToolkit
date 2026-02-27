@@ -2513,6 +2513,8 @@ export async function addCustomClaim(
   log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
+    const baseUrl = normalizeOrgUrl(config.orgUrl);
+    const headers = oktaHeaders(config);
     const authServerId = inputs?.authServerId?.trim();
     const claimName = inputs?.claimName?.trim();
     const valueExpression = inputs?.valueExpression?.trim();
@@ -2530,6 +2532,21 @@ export async function addCustomClaim(
     }
     if (!claimType) {
       return { success: false, message: 'Claim type is required.' };
+    }
+
+    // Before creating, check for existing claim with same name
+    log({ level: 'info', message: `Checking for existing claim "${claimName}"...` });
+    const existingRes = await fetch(`${baseUrl}/api/v1/authorizationServers/${authServerId}/claims`, {
+      headers,
+      cache: 'no-store',
+    });
+    if (existingRes.ok) {
+      const claims = await existingRes.json();
+      const existing = claims.find((c: any) => c.name === claimName);
+      if (existing) {
+        log({ level: 'warn', message: `Claim "${claimName}" already exists` });
+        return { success: true, message: `Custom claim "${claimName}" already exists on this authorization server.`, data: existing };
+      }
     }
 
     const created = await oktaFetch<any>(
@@ -2576,6 +2593,8 @@ export async function addCustomScope(
   log: LogFn = () => {}
 ): Promise<OktaActionResult> {
   try {
+    const baseUrl = normalizeOrgUrl(config.orgUrl);
+    const headers = oktaHeaders(config);
     const authServerId = inputs?.authServerId?.trim();
     const scopeName = inputs?.scopeName?.trim();
     const description = inputs?.description?.trim() || '';
@@ -2587,6 +2606,21 @@ export async function addCustomScope(
     }
     if (!scopeName) {
       return { success: false, message: 'Scope name is required.' };
+    }
+
+    // Before creating, check for existing scope with same name
+    log({ level: 'info', message: `Checking for existing scope "${scopeName}"...` });
+    const existingRes = await fetch(`${baseUrl}/api/v1/authorizationServers/${authServerId}/scopes`, {
+      headers,
+      cache: 'no-store',
+    });
+    if (existingRes.ok) {
+      const scopes = await existingRes.json();
+      const existing = scopes.find((s: any) => s.name === scopeName);
+      if (existing) {
+        log({ level: 'warn', message: `Scope "${scopeName}" already exists` });
+        return { success: true, message: `Custom scope "${scopeName}" already exists on this authorization server.`, data: existing };
+      }
     }
 
     const created = await oktaFetch<any>(
@@ -4467,6 +4501,275 @@ export async function customizeActivationEmail(
     return {
       success: false,
       message: `Error customizing activation email: ${err.message ?? String(err)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Cleanup Demo Org
+// ============================================================================
+
+/**
+ * Cleanup Demo Org
+ * Deletes demo resources: atko.email users, standard department groups (and their rules), and demo apps.
+ */
+export async function cleanupDemoOrg(
+  config: OktaConfig,
+  options: {
+    deleteUsers?: string;
+    deleteGroups?: string;
+    deleteApps?: string;
+  },
+  log: LogFn = () => {}
+): Promise<OktaActionResult> {
+  try {
+    const baseUrl = normalizeOrgUrl(config.orgUrl);
+    const headers = oktaHeaders(config);
+
+    const doDeleteUsers = (options.deleteUsers ?? 'yes') !== 'no';
+    const doDeleteGroups = (options.deleteGroups ?? 'yes') !== 'no';
+    const doDeleteApps = (options.deleteApps ?? 'no') !== 'no';
+
+    const summary: string[] = [];
+    let step = 0;
+
+    // Helper: deactivate then delete, treating 404 as already-gone
+    async function deactivateThenDelete(resourcePath: string, label: string): Promise<void> {
+      // Deactivate
+      const deactivateRes = await fetch(`${baseUrl}${resourcePath}/lifecycle/deactivate`, {
+        method: 'POST',
+        headers,
+        cache: 'no-store',
+      });
+      if (!deactivateRes.ok && deactivateRes.status !== 404) {
+        const body = await safeJson<any>(deactivateRes);
+        throw new Error(`Deactivate ${label} failed (${deactivateRes.status}): ${body?.errorSummary || deactivateRes.statusText}`);
+      }
+
+      // Delete
+      const deleteRes = await fetch(`${baseUrl}${resourcePath}`, {
+        method: 'DELETE',
+        headers,
+        cache: 'no-store',
+      });
+      if (!deleteRes.ok && deleteRes.status !== 404) {
+        const body = await safeJson<any>(deleteRes);
+        throw new Error(`Delete ${label} failed (${deleteRes.status}): ${body?.errorSummary || deleteRes.statusText}`);
+      }
+    }
+
+    // ---- Delete Users ----
+    if (doDeleteUsers) {
+      log({ level: 'info', message: 'Searching for demo users with @atko.email domain...' });
+
+      // Fetch users — try search filter first, fall back to broader fetch + client-side filter
+      let users: any[] = [];
+
+      const searchRes = await fetch(
+        `${baseUrl}/api/v1/users?search=profile.email+co+%22%40atko.email%22&limit=200`,
+        { headers, cache: 'no-store' }
+      );
+
+      if (searchRes.ok) {
+        const searchBody = await searchRes.json();
+        users = Array.isArray(searchBody) ? searchBody : [];
+        // If search returned 0 results it may be because co operator is unsupported; try login filter
+        if (users.length === 0) {
+          const loginRes = await fetch(
+            `${baseUrl}/api/v1/users?search=profile.login+co+%22atko.email%22&limit=200`,
+            { headers, cache: 'no-store' }
+          );
+          if (loginRes.ok) {
+            const loginBody = await loginRes.json();
+            users = Array.isArray(loginBody) ? loginBody : [];
+          }
+        }
+      }
+
+      // Client-side guard: keep only users whose email or login contains atko.email
+      users = users.filter((u: any) => {
+        const email: string = u.profile?.email ?? '';
+        const login: string = u.profile?.login ?? '';
+        return email.includes('atko.email') || login.includes('atko.email');
+      });
+
+      log({ level: 'info', message: `Found ${users.length} demo user(s) to delete.` });
+
+      let deletedUsers = 0;
+      for (const user of users) {
+        step++;
+        const userId: string = user.id;
+        const label = user.profile?.login ?? userId;
+        log({ level: 'info', message: `[${step}] Deactivating and deleting user: ${label}` });
+        try {
+          await deactivateThenDelete(`/api/v1/users/${userId}`, `user ${label}`);
+          deletedUsers++;
+        } catch (err: any) {
+          log({ level: 'warn', message: `  Could not delete user ${label}: ${err.message}` });
+        }
+      }
+
+      summary.push(`Users deleted: ${deletedUsers}`);
+    }
+
+    // ---- Delete Groups (and rules pointing to them) ----
+    if (doDeleteGroups) {
+      const departments = [
+        'Engineering',
+        'Sales',
+        'Marketing',
+        'Finance',
+        'Human Resources',
+        'Partners',
+        'Contractors',
+      ];
+
+      // Fetch all group rules once
+      log({ level: 'info', message: 'Fetching group rules for cleanup...' });
+      let allRules: any[] = [];
+      const rulesRes = await fetch(`${baseUrl}/api/v1/groups/rules?limit=200`, {
+        headers,
+        cache: 'no-store',
+      });
+      if (rulesRes.ok) {
+        const rulesBody = await rulesRes.json();
+        allRules = Array.isArray(rulesBody) ? rulesBody : [];
+      }
+
+      let deletedGroups = 0;
+      let deletedRules = 0;
+
+      for (const dept of departments) {
+        // Find the group by exact name
+        const groupSearchRes = await fetch(
+          `${baseUrl}/api/v1/groups?search=profile.name+eq+%22${encodeURIComponent(dept)}%22`,
+          { headers, cache: 'no-store' }
+        );
+
+        if (!groupSearchRes.ok) {
+          log({ level: 'warn', message: `Could not search for group "${dept}" — skipping.` });
+          continue;
+        }
+
+        const groups: any[] = await groupSearchRes.json();
+        const group = groups.find((g: any) => g.profile?.name === dept);
+
+        if (!group) {
+          log({ level: 'info', message: `Group "${dept}" not found — skipping.` });
+          continue;
+        }
+
+        const groupId: string = group.id;
+
+        // Delete any group rules that assign to this group
+        const matchingRules = allRules.filter((r: any) =>
+          r.actions?.assignUserToGroups?.groupIds?.includes(groupId)
+        );
+
+        for (const rule of matchingRules) {
+          step++;
+          log({ level: 'info', message: `[${step}] Deleting group rule "${rule.name}" (ID: ${rule.id})` });
+          try {
+            // Deactivate rule first if active
+            if (rule.status === 'ACTIVE') {
+              await fetch(`${baseUrl}/api/v1/groups/rules/${rule.id}/lifecycle/deactivate`, {
+                method: 'POST',
+                headers,
+                cache: 'no-store',
+              });
+            }
+            const ruleDeleteRes = await fetch(`${baseUrl}/api/v1/groups/rules/${rule.id}`, {
+              method: 'DELETE',
+              headers,
+              cache: 'no-store',
+            });
+            if (ruleDeleteRes.ok || ruleDeleteRes.status === 404) {
+              deletedRules++;
+            } else {
+              const body = await safeJson<any>(ruleDeleteRes);
+              log({ level: 'warn', message: `  Could not delete rule ${rule.id}: ${body?.errorSummary ?? ruleDeleteRes.statusText}` });
+            }
+          } catch (err: any) {
+            log({ level: 'warn', message: `  Error deleting rule ${rule.id}: ${err.message}` });
+          }
+        }
+
+        // Delete the group itself
+        step++;
+        log({ level: 'info', message: `[${step}] Deleting group "${dept}" (ID: ${groupId})` });
+        try {
+          const groupDeleteRes = await fetch(`${baseUrl}/api/v1/groups/${groupId}`, {
+            method: 'DELETE',
+            headers,
+            cache: 'no-store',
+          });
+          if (groupDeleteRes.ok || groupDeleteRes.status === 404) {
+            deletedGroups++;
+          } else {
+            const body = await safeJson<any>(groupDeleteRes);
+            log({ level: 'warn', message: `  Could not delete group "${dept}": ${body?.errorSummary ?? groupDeleteRes.statusText}` });
+          }
+        } catch (err: any) {
+          log({ level: 'warn', message: `  Error deleting group "${dept}": ${err.message}` });
+        }
+      }
+
+      summary.push(`Department groups deleted: ${deletedGroups}`);
+      summary.push(`Group rules deleted: ${deletedRules}`);
+    }
+
+    // ---- Delete Apps ----
+    if (doDeleteApps) {
+      const appLabels = ['Salesforce', 'Box'];
+      let deletedApps = 0;
+
+      for (const label of appLabels) {
+        const appSearchRes = await fetch(
+          `${baseUrl}/api/v1/apps?filter=label+eq+%22${encodeURIComponent(label)}%22&limit=5`,
+          { headers, cache: 'no-store' }
+        );
+
+        if (!appSearchRes.ok) {
+          log({ level: 'warn', message: `Could not search for app "${label}" — skipping.` });
+          continue;
+        }
+
+        const apps: any[] = await appSearchRes.json();
+
+        if (apps.length === 0) {
+          log({ level: 'info', message: `App "${label}" not found — skipping.` });
+          continue;
+        }
+
+        for (const app of apps) {
+          step++;
+          const appId: string = app.id;
+          log({ level: 'info', message: `[${step}] Deactivating and deleting app "${app.label}" (ID: ${appId})` });
+          try {
+            await deactivateThenDelete(`/api/v1/apps/${appId}`, `app ${app.label}`);
+            deletedApps++;
+          } catch (err: any) {
+            log({ level: 'warn', message: `  Could not delete app ${app.label}: ${err.message}` });
+          }
+        }
+      }
+
+      summary.push(`Apps deleted: ${deletedApps}`);
+    }
+
+    const summaryMsg = summary.length > 0 ? summary.join(', ') : 'Nothing to clean up (all options disabled).';
+    log({ level: 'success', message: `Cleanup complete. ${summaryMsg}` });
+
+    return {
+      success: true,
+      message: `Demo org cleanup complete. ${summaryMsg}`,
+      data: { summary },
+    };
+  } catch (err: any) {
+    console.error('cleanupDemoOrg error', err);
+    return {
+      success: false,
+      message: `Error during demo org cleanup: ${err.message ?? String(err)}`,
     };
   }
 }

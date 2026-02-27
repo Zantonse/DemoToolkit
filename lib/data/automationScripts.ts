@@ -51,6 +51,7 @@ export const SCRIPT_IDS = [
   'create-oidc-app',
   'configure-auth-server-policy',
   'customize-activation-email',
+  'cleanup-demo-org',
 ] as const;
 
 /**
@@ -931,6 +932,45 @@ export const automationScripts: AutomationScript[] = [
         type: "text",
         placeholder: "<html>...(must include ${activationLink})</html>",
         required: false
+      }
+    ]
+  },
+  {
+    id: "cleanup-demo-org",
+    name: "Cleanup Demo Org",
+    description: "Deletes demo resources from the org: atko.email demo users, standard department groups (and their group rules), and/or Salesforce and Box apps. Useful for resetting an org after a demo.",
+    category: "Tools",
+    requiresInput: true,
+    inputFields: [
+      {
+        name: "deleteUsers",
+        label: "Delete Demo Users (@atko.email domain)",
+        type: "select",
+        required: true,
+        options: [
+          { value: "yes", label: "Yes — delete all @atko.email users" },
+          { value: "no", label: "No — keep users" }
+        ]
+      },
+      {
+        name: "deleteGroups",
+        label: "Delete Department Groups",
+        type: "select",
+        required: true,
+        options: [
+          { value: "yes", label: "Yes — delete Engineering, Sales, Marketing, Finance, HR, Partners, Contractors" },
+          { value: "no", label: "No — keep groups" }
+        ]
+      },
+      {
+        name: "deleteApps",
+        label: "Delete Demo Apps (Salesforce, Box)",
+        type: "select",
+        required: true,
+        options: [
+          { value: "no", label: "No — keep apps" },
+          { value: "yes", label: "Yes — deactivate and delete Salesforce and Box apps" }
+        ]
       }
     ]
   }

@@ -45,6 +45,7 @@ import {
   createOidcApp,
   configureAuthServerPolicy,
   customizeActivationEmail,
+  cleanupDemoOrg,
 } from '../app/actions/oktaActions';
 
 export type HandlerFn = (
@@ -205,6 +206,12 @@ const handlers: Record<string, HandlerFn> = {
     customizeActivationEmail(config, {
       subject: (inputs?.subject as string) || '',
       body: inputs?.body as string | undefined,
+    }, log),
+  'cleanup-demo-org': (config, inputs, log) =>
+    cleanupDemoOrg(config, {
+      deleteUsers: inputs?.deleteUsers as string | undefined,
+      deleteGroups: inputs?.deleteGroups as string | undefined,
+      deleteApps: inputs?.deleteApps as string | undefined,
     }, log),
 };
 
