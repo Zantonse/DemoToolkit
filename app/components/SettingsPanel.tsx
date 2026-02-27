@@ -44,6 +44,7 @@ export function SettingsPanel() {
     keyId,
     setOrgUrl,
     setApiToken,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setAuthMode,
     setClientId,
     setPrivateKey,

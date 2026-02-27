@@ -59,6 +59,11 @@ next-env.d.ts
 .turbo
 .eslintcache
 .worktrees/
+.playwright-mcp/
+
+# Session artifacts
+*.png
+SEtoolkitMCPplan.md
 
 # MacOS
 .DS_Store

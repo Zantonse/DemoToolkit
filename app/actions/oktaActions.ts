@@ -47,7 +47,7 @@ export async function enableFIDO2(
 
     const authenticators = (await listRes.json()) as OktaAuthenticator[];
 
-    let webauthn = authenticators.find(
+    const webauthn = authenticators.find(
       (a) => a.key === 'webauthn' || a.key === 'security_key'
     );
 
@@ -1292,7 +1292,7 @@ export async function configureEntityRiskPolicy(
     }
 
     // Step 2: Try to find the Entity Risk Policy with RISK type
-    let policiesRes = await fetch(`${baseUrl}/api/v1/policies?type=RISK`, {
+    const policiesRes = await fetch(`${baseUrl}/api/v1/policies?type=RISK`, {
       method: 'GET',
       headers,
       cache: 'no-store'
