@@ -101,10 +101,12 @@ Three files must be updated (the `ScriptId` type auto-derives from `SCRIPT_IDS`)
 
 | Category | Scripts |
 |----------|---------|
-| Setup & Users | create-super-admins-group, populate-demo-users, create-standard-department-groups, setup-realms, add-new-administrator |
-| Security & Policies | enable-fido2, create-device-assurance-policies, configure-entity-risk-policy, run-policy-simulation, create-network-zone, list-network-zones, create-trusted-origin, list-trusted-origins |
-| Applications | add-salesforce-saml-app, add-box-app, create-auth-server, add-custom-claim, add-custom-scope |
-| Governance | create-access-certification-campaign, setup-sod-demo, create-entitlement-bundles |
+| Setup & Users | create-super-admins-group, populate-demo-users, create-standard-department-groups, setup-realms, add-new-administrator, reset-demo-user-pool |
+| Security & Policies | enable-fido2, create-device-assurance-policies, configure-entity-risk-policy, run-policy-simulation, create-network-zone, list-network-zones, create-trusted-origin, list-trusted-origins, configure-threat-insight, configure-authenticators, create-authentication-policy, setup-behavior-detection, create-password-policy, create-enrollment-policy, enable-self-service-registration |
+| Applications | add-salesforce-saml-app, add-box-app, create-auth-server, add-custom-claim, add-custom-scope, add-google-social-idp, create-oidc-app, configure-auth-server-policy |
+| Governance | create-access-certification-campaign, setup-sod-demo, create-entitlement-bundles, create-custom-admin-role |
+| Customization | apply-customer-branding, customize-activation-email |
+| Tools | setup-event-hooks, cleanup-demo-org |
 
 ### API Routes
 
